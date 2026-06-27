@@ -942,17 +942,23 @@ def cmd_query(question: str):
     cfg   = load_config()
     brain = load_brain()
 
-    if not cfg.get("agent_api_key") and cfg.get("provider") != "ollama":
-        print(f"{RED}✗ No AI agent connected.{RESET}")
-        print(f"  Run: {CYAN}motherflame setup{RESET}")
-        return
-
     if not brain.get("items"):
         print(f"{RED}✗ Org Brain is empty.{RESET}")
         print(f"  Run: {CYAN}motherflame start{RESET}")
         return
 
     org = brain.get("org_name", "Org")
+    has_llm = bool(cfg.get("agent_api_key")) or cfg.get("provider") == "ollama"
+
+    # No LLM connected → still useful: keyword/budget retrieval (no API key needed).
+    if not has_llm:
+        from motherflame.runtime import _tool_query_brain
+        print(f"\n{FLAME_ORANGE}🔥{RESET} {BOLD}{org} Org Brain{RESET} {DIM}· {len(brain['items'])} items · keyword retrieval (no AI key){RESET}")
+        print(f"  {DIM}Q: {question}{RESET}\n")
+        print(f"{BOLD}Relevant facts:{RESET}\n{_tool_query_brain(brain, question)}\n")
+        print(f"  {DIM}Connect an AI agent ({CYAN}motherflame setup{RESET}{DIM}) for natural-language answers.{RESET}\n")
+        return
+
     print(f"\n{FLAME_ORANGE}🔥{RESET} {BOLD}{org} Org Brain{RESET} {DIM}· {len(brain['items'])} items{RESET}")
     print(f"  {DIM}Q: {question}{RESET}\n")
 

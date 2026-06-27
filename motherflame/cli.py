@@ -35,11 +35,8 @@ def main():
         cmd_setup()
 
     elif cmd == "connect":
-        if len(args) < 2:
-            print("Usage: motherflame connect <flame_key>")
-            print("Get your key at motherflame.ai/signup")
-            return
-        cmd_connect(args[1])
+        # No key → cmd_connect auto-generates a local Flame Key (no server needed).
+        cmd_connect(args[1] if len(args) >= 2 else None)
 
     elif cmd == "status":
         cmd_status()

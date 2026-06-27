@@ -117,6 +117,29 @@ def test_unknown_connector_raises():
         pass
 
 
+# ── live-run regressions (found by running the CLI foreground) ───────────────
+
+def test_connect_dispatch_allows_no_key():
+    """CLI `connect` with no arg must reach cmd_connect (auto-gen), not be
+    blocked by a stale 'require key' guard."""
+    import inspect
+    from motherflame import cli
+    src = inspect.getsource(cli.main)
+    # the old guard printed a fake signup URL and returned before cmd_connect
+    assert "motherflame.ai/signup" not in src
+    assert "cmd_connect(args[1] if len(args) >= 2 else None)" in src
+
+
+def test_query_keyword_fallback_without_llm():
+    """cmd_query must fall back to keyword retrieval when no AI key is set,
+    not dead-end with 'No AI agent connected'."""
+    import inspect
+    from motherflame import core
+    src = inspect.getsource(core.cmd_query)
+    assert "_tool_query_brain" in src          # uses keyword retrieval
+    assert "keyword retrieval" in src
+
+
 # ── eval harness ─────────────────────────────────────────────────────────────
 
 def test_eval_precision_and_recall():
