@@ -39,6 +39,17 @@ TOOLS = [
         },
     },
     {
+        "name": "forget_fact",
+        "description": "Retract/delete a fact from the Org Brain. Use when the user says a fact is wrong, outdated, or should be removed. The deletion survives team syncs.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "key": {"type": "string", "description": "The key of the fact to forget (e.g. 'pricing')"},
+            },
+            "required": ["key"],
+        },
+    },
+    {
         "name": "list_gaps",
         "description": "List what information is still missing from the Org Brain.",
         "parameters": {"type": "object", "properties": {}, "required": []},
@@ -66,16 +77,19 @@ def _tool_query_brain(brain, topic):
     if not hits:
         return "Org Brain is empty."
 
-    # annotate contested facts with competing values, then fit to token budget
+    # annotate contested facts with competing values + add provenance so the
+    # agent can cite where each fact came from, then fit to token budget
     enriched = []
     for h in hits:
         it = dict(h)
+        src = h.get("source") or h.get("via") or "unknown"
         if h.get("contested"):
             claims = brain.get("claims", {}).get(h["key"], [])
             alts = sorted({c["value"] for c in claims if c["value"] != h["value"]})
             if alts:
                 it["value"] = (f"{h['value']}  ⚠️CONTESTED via {h.get('resolution','?')}; "
                                f"other claims: {', '.join(a[:40] for a in alts)}")
+        it["value"] = f"{it['value']}  [source: {src}]"
         enriched.append(it)
 
     fit = tokens.fit_facts(enriched, query=topic, budget_tokens=tokens.DEFAULT_BUDGET)
@@ -83,20 +97,18 @@ def _tool_query_brain(brain, topic):
 
 
 def _tool_add_fact(brain, category, key, value):
-    from motherflame import ledger
-    # de-dupe by key
-    for item in brain.get("items", []):
-        if item["key"] == key:
-            item["value"] = value
-            item["updated_at"] = datetime.now().isoformat()
-            ledger.record_fact_write(category, key, value, source="chat", fact_id=key)
-            return f"Updated existing fact '{key}'."
-    brain.setdefault("items", []).append({
-        "category": category, "key": key, "value": value,
-        "source": "chat", "confidence": 1.0,
-        "harvested_at": datetime.now().isoformat(), "via": "chat",
-    })
+    """Add/update a fact from chat or MCP. Routes through the claims layer (same
+    as harvest) so rebuild_canonical never drops it. Chat/MCP writes are
+    authoritative (confidence 1.0) and tagged source='chat'."""
+    from motherflame import ledger, conflicts
+    conflicts.ensure_layers(brain)
+    existed = bool(conflicts._live_claims(brain, conflicts.canonical_key(key)))
+    conflicts.add_claim(brain, category, key, value,
+                        source="chat", owner="", confidence=1.0)
+    conflicts.rebuild_canonical(brain)   # reflect into canonical items immediately
     ledger.record_fact_write(category, key, value, source="chat", fact_id=key)
+    if existed:
+        return f"Updated fact '{key}'."
     return f"Added new fact '{key}' under {category}."
 
 
@@ -116,6 +128,17 @@ def _tool_list_all_facts(brain):
     return "\n".join(out) if out else "Org Brain is empty."
 
 
+def _tool_forget_fact(brain, key):
+    """Retract a fact (tombstone). Survives merges so it won't resurrect."""
+    from motherflame import conflicts
+    conflicts.ensure_layers(brain)
+    n = conflicts.retract_claim(brain, key)
+    conflicts.rebuild_canonical(brain)
+    if n == 0:
+        return f"No live fact named '{key}' to forget."
+    return f"Forgot '{key}' ({n} claim(s) retracted — won't return on sync)."
+
+
 def _dispatch_tool(name, args, brain):
     """Run a tool by name. Returns (result_string, mutated)."""
     try:
@@ -124,6 +147,8 @@ def _dispatch_tool(name, args, brain):
         elif name == "add_fact":
             return _tool_add_fact(brain, args.get("category", "General"),
                                   args.get("key", "fact"), args.get("value", "")), True
+        elif name == "forget_fact":
+            return _tool_forget_fact(brain, args.get("key", "")), True
         elif name == "list_gaps":
             return _tool_list_gaps(brain), False
         elif name == "list_all_facts":
@@ -147,29 +172,29 @@ def _openai_tools(tools):
 
 
 def _call_anthropic_agent(api_key, model, messages, system):
+    from motherflame.agent import _urlopen_retry
     payload = json.dumps({
-        "model": model, "max_tokens": 1024, "system": system,
+        "model": model, "max_tokens": 2048, "system": system,
         "messages": messages, "tools": _anthropic_tools(TOOLS),
     }).encode()
     req = urllib.request.Request(
         "https://api.anthropic.com/v1/messages", data=payload,
         headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
         method="POST")
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.loads(resp.read())
+    return _urlopen_retry(req, timeout=60)
 
 
 def _call_openai_agent(api_key, model, messages, system):
+    from motherflame.agent import _urlopen_retry
     msgs = [{"role": "system", "content": system}] + messages
     payload = json.dumps({
-        "model": model, "messages": msgs, "tools": _openai_tools(TOOLS), "max_tokens": 1024,
+        "model": model, "messages": msgs, "tools": _openai_tools(TOOLS), "max_tokens": 2048,
     }).encode()
     req = urllib.request.Request(
         "https://api.openai.com/v1/chat/completions", data=payload,
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         method="POST")
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.loads(resp.read())
+    return _urlopen_retry(req, timeout=60)
 
 
 # ── The agentic loop ───────────────────────────────────────────────────────
@@ -201,7 +226,7 @@ def agent_turn(cfg, brain, user_message, history, on_tool=None):
 
     if provider == "anthropic":
         history.append({"role": "user", "content": user_message})
-        for _ in range(6):  # max 6 tool-loop iterations
+        for _ in range(8):  # max tool-loop iterations
             resp = _call_anthropic_agent(api_key, model, history, system)
             content = resp.get("content", [])
             # collect tool_use blocks
@@ -222,11 +247,22 @@ def agent_turn(cfg, brain, user_message, history, on_tool=None):
                     "type": "tool_result", "tool_use_id": tu["id"], "content": result,
                 })
             history.append({"role": "user", "content": tool_results})
-        return ("(stopped after 6 tool iterations)", mutated)
+        # Loop budget hit — don't throw away the work. Ask for a final answer
+        # using everything gathered so far (no more tools).
+        try:
+            history.append({"role": "user", "content":
+                "You've used several tools. Give your best final answer now using "
+                "what you've gathered — do not call more tools."})
+            resp = _call_anthropic_agent(api_key, model, history, system)
+            final = "".join(b.get("text", "") for b in resp.get("content", [])
+                             if b.get("type") == "text").strip()
+            return (final or "(no answer produced)", mutated)
+        except Exception:
+            return ("\n".join(text_blocks).strip() or "(stopped after tool limit)", mutated)
 
     else:  # openai
         history.append({"role": "user", "content": user_message})
-        for _ in range(6):
+        for _ in range(8):
             resp = _call_openai_agent(api_key, model, history, system)
             msg = resp["choices"][0]["message"]
             tool_calls = msg.get("tool_calls") or []
@@ -248,7 +284,16 @@ def agent_turn(cfg, brain, user_message, history, on_tool=None):
                 history.append({
                     "role": "tool", "tool_call_id": tc["id"], "content": result,
                 })
-        return ("(stopped after 6 tool iterations)", mutated)
+        # Loop budget hit — get a final answer instead of discarding the work.
+        try:
+            history.append({"role": "user", "content":
+                "You've used several tools. Give your best final answer now using "
+                "what you've gathered — do not call more tools."})
+            resp = _call_openai_agent(api_key, model, history, system)
+            return ((resp["choices"][0]["message"].get("content") or "").strip()
+                    or "(no answer produced)", mutated)
+        except Exception:
+            return ("(stopped after tool limit)", mutated)
 
 
 # ── Planning mode ──────────────────────────────────────────────────────────
@@ -293,29 +338,29 @@ def plan_task(cfg, brain, goal):
 
 
 def _call_anthropic_plain(api_key, model, user, system):
+    from motherflame.agent import _urlopen_retry
     payload = json.dumps({
-        "model": model, "max_tokens": 512, "system": system,
+        "model": model, "max_tokens": 1024, "system": system,
         "messages": [{"role": "user", "content": user}],
     }).encode()
     req = urllib.request.Request(
         "https://api.anthropic.com/v1/messages", data=payload,
         headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
         method="POST")
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        data = json.loads(resp.read())
+    data = _urlopen_retry(req, timeout=60)
     return "".join(c.get("text", "") for c in data.get("content", []) if c.get("type") == "text")
 
 
 def _call_openai_plain(api_key, model, user, system):
+    from motherflame.agent import _urlopen_retry
     payload = json.dumps({
         "model": model,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        "max_tokens": 512,
+        "max_tokens": 1024,
     }).encode()
     req = urllib.request.Request(
         "https://api.openai.com/v1/chat/completions", data=payload,
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         method="POST")
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        data = json.loads(resp.read())
+    data = _urlopen_retry(req, timeout=60)
     return data["choices"][0]["message"].get("content") or ""

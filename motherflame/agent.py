@@ -145,10 +145,48 @@ PROVIDERS = {
 
 # ── LLM call ──────────────────────────────────────────────────────────────
 
-def _call_anthropic(api_key: str, model: str, system: str, user: str) -> str:
+# Default output budget; callers can override via cfg["max_tokens"].
+DEFAULT_MAX_TOKENS = 2048
+_RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 529}
+
+
+def _urlopen_retry(req, timeout=60, attempts=4):
+    """POST with exponential backoff on transient failures (429/529 overload,
+    5xx, network blips). Honors Retry-After when present. Raises the last error
+    after `attempts` tries so the caller can degrade gracefully."""
+    import time as _t
+    last = None
+    for i in range(attempts):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            last = e
+            if e.code not in _RETRYABLE_STATUS or i == attempts - 1:
+                raise
+            retry_after = e.headers.get("Retry-After") if e.headers else None
+            delay = float(retry_after) if (retry_after or "").isdigit() else (2 ** i)
+            _t.sleep(min(delay, 30))
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            last = e
+            if i == attempts - 1:
+                raise
+            _t.sleep(2 ** i)
+    if last:
+        raise last
+
+
+def _max_tokens(cfg, default=DEFAULT_MAX_TOKENS):
+    try:
+        return int((cfg or {}).get("max_tokens", default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _call_anthropic(api_key: str, model: str, system: str, user: str, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
     payload = json.dumps({
         "model": model,
-        "max_tokens": 1024,
+        "max_tokens": max_tokens,
         "system": system,
         "messages": [{"role": "user", "content": user}]
     }).encode()
@@ -162,19 +200,18 @@ def _call_anthropic(api_key: str, model: str, system: str, user: str) -> str:
         },
         method="POST"
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read())
+    data = _urlopen_retry(req, timeout=60)
     return data["content"][0]["text"].strip()
 
 
-def _call_openai(api_key: str, model: str, system: str, user: str) -> str:
+def _call_openai(api_key: str, model: str, system: str, user: str, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
     payload = json.dumps({
         "model": model,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        "max_tokens": 1024,
+        "max_tokens": max_tokens,
     }).encode()
     req = urllib.request.Request(
         "https://api.openai.com/v1/chat/completions",
@@ -185,12 +222,11 @@ def _call_openai(api_key: str, model: str, system: str, user: str) -> str:
         },
         method="POST"
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read())
+    data = _urlopen_retry(req, timeout=60)
     return data["choices"][0]["message"]["content"].strip()
 
 
-def _call_ollama(model: str, system: str, user: str) -> str:
+def _call_ollama(model: str, system: str, user: str, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
     payload = json.dumps({
         "model": model,
         "prompt": f"{system}\n\n{user}",
@@ -202,8 +238,7 @@ def _call_ollama(model: str, system: str, user: str) -> str:
         headers={"Content-Type": "application/json"},
         method="POST"
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        data = json.loads(resp.read())
+    data = _urlopen_retry(req, timeout=120)
     return data["response"].strip()
 
 
@@ -212,13 +247,14 @@ def call_llm(cfg: dict, system: str, user: str) -> str:
     provider = cfg.get("provider", "anthropic")
     model    = cfg.get("model", PROVIDERS[provider]["default_model"])
     api_key  = cfg.get("agent_api_key", "")
+    mt       = _max_tokens(cfg)
 
     if provider == "anthropic":
-        return _call_anthropic(api_key, model, system, user)
+        return _call_anthropic(api_key, model, system, user, mt)
     elif provider == "openai":
-        return _call_openai(api_key, model, system, user)
+        return _call_openai(api_key, model, system, user, mt)
     elif provider == "ollama":
-        return _call_ollama(model, system, user)
+        return _call_ollama(model, system, user, mt)
     else:
         raise ValueError(f"Unknown provider: {provider}")
 

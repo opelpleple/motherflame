@@ -70,6 +70,19 @@ def _tool_defs():
                 "required": ["category", "key", "value"],
             },
         },
+        {
+            "name": "forget_fact",
+            "description": (
+                "Retract/delete a fact from the Org Brain. Use when a fact is wrong, "
+                "outdated, or should be removed. The deletion is a tombstone that "
+                "survives team syncs (won't be resurrected by a teammate's stale copy)."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {"key": {"type": "string"}},
+                "required": ["key"],
+            },
+        },
     ]
 
 
@@ -90,7 +103,7 @@ def _readonly() -> bool:
 
 
 def _run_tool(name, args):
-    from motherflame.core import load_brain, save_brain
+    from motherflame.core import load_brain, update_brain
     from motherflame.runtime import _tool_query_brain, _tool_add_fact, _tool_list_all_facts
 
     brain = load_brain()
@@ -102,10 +115,17 @@ def _run_tool(name, args):
         if _readonly():
             return ("⚠️ This Org Brain is connected read-only. Writes are disabled "
                     "(unset MOTHERFLAME_MCP_READONLY to allow add_fact).")
-        result = _tool_add_fact(brain, args.get("category", "General"),
-                                args.get("key", "fact"), args.get("value", ""))
-        save_brain(brain)
-        return result
+        # Locked read-modify-write: re-load the freshest brain inside the lock so
+        # a concurrent chat/MCP write isn't clobbered (lost update).
+        return update_brain(lambda b: _tool_add_fact(
+            b, args.get("category", "General"), args.get("key", "fact"),
+            args.get("value", "")))
+    elif name == "forget_fact":
+        if _readonly():
+            return ("⚠️ This Org Brain is connected read-only. Writes are disabled "
+                    "(unset MOTHERFLAME_MCP_READONLY to allow forget_fact).")
+        from motherflame.runtime import _tool_forget_fact
+        return update_brain(lambda b: _tool_forget_fact(b, args.get("key", "")))
     else:
         raise ValueError(f"Unknown tool: {name}")
 

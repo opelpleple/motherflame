@@ -93,7 +93,8 @@ def _extract_number(s: str):
 KEY_ALIASES = {
     "pricing": {"price", "prices", "pricing_model", "price_model", "pricing_tier",
                 "pricing_tiers", "cost", "costs", "price_point", "price_points",
-                "subscription_price", "plan_price"},
+                "subscription_price", "plan_price", "listing_price", "listing_fee",
+                "fees", "fee", "ราคา", "ค่าบริการ", "ค่าธรรมเนียม"},
     "team_size": {"headcount", "team", "team_count", "employees", "employee_count",
                   "staff_size", "number_of_employees", "people_count"},
     "company_name": {"org_name", "organization_name", "org", "company", "business_name"},
@@ -105,6 +106,16 @@ KEY_ALIASES = {
     "goals": {"goal", "objective", "objectives", "okr", "okrs", "kpi", "kpis", "targets"},
     "communication_style": {"voice", "brand_voice", "tone", "tone_of_voice", "style"},
     "current_focus": {"focus", "priority", "priorities", "roadmap", "current_priority"},
+    # ── Finance / regulated-industry vocabulary ──
+    "license_tier": {"license", "licence", "license_level", "licensing", "tier",
+                     "plan_tier", "membership_tier", "ใบอนุญาต", "ระดับใบอนุญาต"},
+    "regulator": {"regulators", "regulatory_body", "governing_body", "authority",
+                  "regulatory_authority", "sec", "compliance_body", "หน่วยงานกำกับ",
+                  "ผู้กำกับดูแล"},
+    "trust_score": {"trust_rating", "trustscore", "rating", "trust_level",
+                    "credibility_score", "คะแนนความน่าเชื่อถือ", "เรตติ้ง"},
+    "compliance": {"compliance_status", "regulatory_status", "kyc", "aml",
+                   "compliance_requirements", "การปฏิบัติตามกฎ", "คอมไพลแอนซ์"},
 }
 
 # Reverse index: alias → canonical (built once)

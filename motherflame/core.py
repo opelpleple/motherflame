@@ -85,6 +85,55 @@ def _load_json_safe(path, default):
     return default() if callable(default) else default
 
 
+# ── Cross-process locking (prevents lost updates) ──────────────────────────
+# brain.json is a single file that callers load → mutate → save. If two
+# processes do that concurrently (e.g. you're chatting while Claude Code writes
+# via MCP), the second save clobbers the first — a lost update. A file lock
+# serializes the read-modify-write window so updates compose instead of racing.
+
+import contextlib
+
+@contextlib.contextmanager
+def brain_lock(timeout=10.0):
+    """Advisory exclusive lock around a brain read-modify-write. Uses fcntl on
+    POSIX; degrades to a best-effort lockfile elsewhere. Always yields."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    lock_path = CONFIG_DIR / ".brain.lock"
+    try:
+        import fcntl, time as _t
+        f = open(lock_path, "w")
+        start = _t.time()
+        while True:
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if _t.time() - start > timeout:
+                    break  # give up waiting; proceed (best-effort, no deadlock)
+                _t.sleep(0.05)
+        try:
+            yield
+        finally:
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            finally:
+                f.close()
+    except ImportError:
+        # No fcntl (e.g. Windows) — proceed without a hard lock.
+        yield
+
+
+def update_brain(mutator):
+    """Locked read-modify-write: load the freshest brain, apply mutator(brain),
+    save. Prevents lost updates when chat and MCP touch the brain concurrently.
+    `mutator` may return a value, which is returned to the caller."""
+    with brain_lock():
+        brain = load_brain()
+        result = mutator(brain)
+        save_brain(brain)
+        return result
+
+
 def load_config():
     return _load_json_safe(CONFIG_FILE, dict)
 
@@ -477,6 +526,7 @@ def harvest_from_folder(folder, brain, globs=None, use_llm=False, cfg=None, chan
         owner = cfg.get("member_name", "")   # team-unique identity (empty if solo)
         redact_on = cfg.get("redact_pii", True)   # default ON — privacy by default
         redaction_total = {}
+        failed_files = []
         # Process ALL files (no silent 30-file cap). Show progress so large
         # harvests are visibly working, not hung. A high ceiling guards against
         # runaway cost; warn instead of silently dropping the rest.
@@ -509,12 +559,21 @@ def harvest_from_folder(folder, brain, globs=None, use_llm=False, cfg=None, chan
                     ledger.record_fact_write(item["category"], key, item["value"],
                                              source=str(file.name), fact_id=key)
                 ledger.record_file_seen(file)   # freshness fingerprint
-            except Exception:
+            except Exception as e:
+                failed_files.append((str(file.name), type(e).__name__))
                 continue
         if total > 20:
             print()  # newline after progress line
         if redaction_total:
             print(f"  {DIM}🔒 Redacted before upload: {redact.summarize(redaction_total)}{RESET}")
+        if failed_files:
+            # Don't lose files silently — tell the user what didn't extract and why.
+            print(f"  {FLAME_YELLOW}⚠️  {len(failed_files)} file(s) failed extraction "
+                  f"(rate limit / parse / encoding):{RESET}")
+            for fname, err in failed_files[:5]:
+                print(f"     {DIM}• {fname} ({err}){RESET}")
+            if len(failed_files) > 5:
+                print(f"     {DIM}…and {len(failed_files) - 5} more. Re-run to retry.{RESET}")
         conflicts.rebuild_canonical(brain)   # recompute single source of truth
         ledger.record_scan(folder, len(files), globs, found_count)
         return brain, found_count

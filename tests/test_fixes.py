@@ -99,7 +99,7 @@ def test_runtime_add_fact():
 def test_mcp_tool_defs_shape():
     defs = mcp_server._tool_defs()
     names = {d["name"] for d in defs}
-    assert names == {"query_brain", "list_facts", "add_fact"}
+    assert names == {"query_brain", "list_facts", "add_fact", "forget_fact"}
     for d in defs:
         assert "description" in d and "inputSchema" in d
 
