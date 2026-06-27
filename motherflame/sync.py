@@ -104,6 +104,13 @@ def _git_sync_dir(remote: str) -> Path:
             repo.mkdir(exist_ok=True)
             _git(["init"], cwd=repo)
             _git(["remote", "add", "origin", remote], cwd=repo, check=False)
+    # Ensure a committer identity exists for THIS repo even if the user has no
+    # global git config (common on fresh machines / CI) — otherwise commit fails
+    # silently and push has no ref to send.
+    _git(["config", "user.email", "sync@motherflame.local"], cwd=repo, check=False)
+    _git(["config", "user.name", "Motherflame Sync"], cwd=repo, check=False)
+    # Normalize the branch name so push/pull target a known ref.
+    _git(["checkout", "-B", "main"], cwd=repo, check=False)
     return repo
 
 
@@ -123,7 +130,7 @@ def push(brain: dict, flame_key: str, org_id: str, git_remote: str = None) -> di
         # their (decrypted) brain into ours and try again — no lost updates.
         last_err = None
         for attempt in range(4):
-            _git(["pull", "--no-edit", "-X", "ours", "origin", "HEAD"], cwd=repo, check=False)
+            _git(["pull", "--no-edit", "-X", "ours", "origin", "main"], cwd=repo, check=False)
             # If a remote blob exists, decrypt + merge so we don't overwrite it
             current = brain
             if fpath.exists():
@@ -136,7 +143,7 @@ def push(brain: dict, flame_key: str, org_id: str, git_remote: str = None) -> di
             fpath.write_bytes(blob)
             _git(["add", safe_name], cwd=repo)
             _git(["commit", "-m", f"motherflame: update {safe}"], cwd=repo, check=False)
-            pr = _git(["push", "origin", "HEAD"], cwd=repo, check=False)
+            pr = _git(["push", "origin", "main"], cwd=repo, check=False)
             if pr.returncode == 0:
                 return {"ok": True, "bytes": len(blob), "items": len(current.get("items", [])),
                         "pushed_at": datetime.now().isoformat(timespec="seconds"),
@@ -159,7 +166,7 @@ def pull(flame_key: str, org_id: str, git_remote: str = None) -> dict | None:
     safe = "".join(c for c in org_id if c.isalnum() or c in "-_") or "org"
     if git_remote:
         repo = _git_sync_dir(git_remote)
-        _git(["pull", "--no-edit", "origin", "HEAD"], cwd=repo, check=False)
+        _git(["pull", "--no-edit", "origin", "main"], cwd=repo, check=False)
         fpath = repo / f"{safe}.flame"
         if not fpath.exists():
             return None
