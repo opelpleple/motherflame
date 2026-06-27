@@ -47,14 +47,63 @@ def _norm(value: str) -> str:
     return " ".join(str(value).lower().split())
 
 
+# ── Key canonicalization ───────────────────────────────────────────────────
+# Without this, LLM-chosen keys drift (pricing / price / pricing_model) and the
+# conflict resolver never sees them as the SAME fact — so disagreements slip
+# through as separate "facts" and the single-source-of-truth guarantee breaks.
+
+# Curated alias map → canonical key. Extend freely; this is the controlled vocab.
+KEY_ALIASES = {
+    "pricing": {"price", "prices", "pricing_model", "price_model", "pricing_tier",
+                "pricing_tiers", "cost", "costs", "price_point", "price_points",
+                "subscription_price", "plan_price"},
+    "team_size": {"headcount", "team", "team_count", "employees", "employee_count",
+                  "staff_size", "number_of_employees", "people_count"},
+    "company_name": {"org_name", "organization_name", "org", "company", "business_name"},
+    "what_we_do": {"mission", "description", "company_description", "tagline",
+                   "value_proposition", "value_prop", "elevator_pitch", "summary"},
+    "product_name": {"product", "main_product", "platform_name", "app_name", "tool_name"},
+    "target_customer": {"customer", "customers", "target_market", "audience",
+                        "target_audience", "ideal_customer", "icp", "buyer"},
+    "goals": {"goal", "objective", "objectives", "okr", "okrs", "kpi", "kpis", "targets"},
+    "communication_style": {"voice", "brand_voice", "tone", "tone_of_voice", "style"},
+    "current_focus": {"focus", "priority", "priorities", "roadmap", "current_priority"},
+}
+
+# Reverse index: alias → canonical (built once)
+_ALIAS_INDEX = {}
+for _canon, _aliases in KEY_ALIASES.items():
+    _ALIAS_INDEX[_canon] = _canon
+    for _a in _aliases:
+        _ALIAS_INDEX[_a] = _canon
+
+
+def canonical_key(key: str) -> str:
+    """Map a free-form/LLM key to its canonical form.
+    1) snake-case normalize  2) alias lookup  3) singularize trailing 's'."""
+    if not key:
+        return "unknown"
+    k = "_".join(str(key).strip().lower().replace("-", "_").replace(" ", "_").split("_"))
+    k = "_".join(p for p in k.split("_") if p)  # collapse repeats
+    if k in _ALIAS_INDEX:
+        return _ALIAS_INDEX[k]
+    # try singular form (pricings → pricing)
+    if k.endswith("s") and k[:-1] in _ALIAS_INDEX:
+        return _ALIAS_INDEX[k[:-1]]
+    return k
+
+
 # ── Recording claims (replaces blind append) ───────────────────────────────
 
 def add_claim(brain: dict, category: str, key: str, value: str,
               source: str = "unknown", owner: str = "", confidence: float = 0.7,
               ts: str = None) -> None:
     """Record a claim about `key`. Never overwrites — appends to the evidence list.
-    De-dupes identical (value, source) pairs so re-scans don't pile up."""
+    De-dupes identical (value, source) pairs so re-scans don't pile up.
+    The key is canonicalized so aliases (pricing/price/pricing_model) collapse
+    to one fact — otherwise disagreements would slip through as separate keys."""
     ensure_layers(brain)
+    key = canonical_key(key)
     ts = ts or datetime.now().isoformat()
     claim = {
         "category": category, "key": key, "value": value,
@@ -198,8 +247,8 @@ def migrate_items_to_claims(brain: dict) -> dict:
         key = it.get("key")
         if not key:
             continue
-        # only migrate if this key has no claims yet
-        if not brain["claims"].get(key):
+        # only migrate if this canonical key has no claims yet
+        if not brain["claims"].get(canonical_key(key)):
             add_claim(brain, it.get("category", "General"), key, it.get("value", ""),
                       source=it.get("source", "legacy"),
                       owner=it.get("owner", ""),

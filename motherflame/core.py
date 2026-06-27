@@ -358,7 +358,7 @@ def harvest_from_folder(folder, brain, globs=None, use_llm=False, cfg=None, chan
         from motherflame.agent import llm_extract_signals
         from motherflame import conflicts
         conflicts.ensure_layers(brain)
-        owner = cfg.get("member_name") or cfg.get("org_name", "")
+        owner = cfg.get("member_name", "")   # team-unique identity (empty if solo)
         for file in files[:30]:  # cap at 30 files for token budget
             try:
                 raw = file.read_text(encoding="utf-8", errors="ignore")
@@ -673,6 +673,14 @@ def cmd_setup():
     cfg["provider"]      = provider_key
     cfg["model"]         = model
     cfg["agent_api_key"] = api_key
+
+    # Member identity — who am I on this team? (powers owner authority in conflicts)
+    existing_member = cfg.get("member_name", "")
+    member_hint = f" [{existing_member}]" if existing_member else ""
+    member = ask(f"Your name (for team attribution){member_hint}", existing_member).strip()
+    if member:
+        cfg["member_name"] = member
+
     save_config(cfg)
 
     spinner("Testing connection...", 0.5)
@@ -881,7 +889,8 @@ def cmd_chat(resume=False):
                 return
         else:
             value = chosen["candidates"][vidx]["value"]
-        conflicts.manual_resolve(brain, chosen["key"], value, by="you")
+        me = cfg.get("member_name", "") or "you"
+        conflicts.manual_resolve(brain, chosen["key"], value, by=me)
         conflicts.rebuild_canonical(brain)
         brain["last_updated"] = _dt.now().strftime("%Y-%m-%d %H:%M")
         save_brain(brain)

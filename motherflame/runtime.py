@@ -63,7 +63,17 @@ def _tool_query_brain(brain, topic):
     if not hits:
         # fall back to returning all so the LLM can reason over them
         hits = brain.get("items", [])
-    lines = [f"[{h['category']}] {h['key']}: {h['value']}" for h in hits[:25]]
+    lines = []
+    for h in hits[:25]:
+        line = f"[{h['category']}] {h['key']}: {h['value']}"
+        # Surface disputed facts so the agent answers with a caveat, not false confidence
+        if h.get("contested"):
+            claims = brain.get("claims", {}).get(h["key"], [])
+            alts = sorted({c["value"] for c in claims})
+            line += (f"  ⚠️ CONTESTED — teammates disagree; "
+                     f"current pick via {h.get('resolution','?')}. "
+                     f"Other claims: {', '.join(a[:40] for a in alts if a != h['value'])}")
+        lines.append(line)
     return "\n".join(lines) if lines else "Org Brain is empty."
 
 

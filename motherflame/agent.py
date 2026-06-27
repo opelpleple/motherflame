@@ -300,6 +300,10 @@ QUERY_SYSTEM = """You are the Org Brain assistant for {org_name}.
 Answer questions using ONLY the org context provided below.
 Be concise and direct. If the answer isn't in the context, say so clearly.
 
+IMPORTANT: If a fact is marked "⚠️ CONTESTED", teammates disagree on its value.
+Do NOT state it as settled fact. Say the value is disputed, give the current
+best pick AND the competing value(s), and suggest running /resolve to settle it.
+
 ORG CONTEXT:
 {context}"""
 
@@ -310,10 +314,15 @@ def query_brain(cfg: dict, brain: dict, question: str) -> str:
     if not items:
         return "Org Brain is empty — run `motherflame start` first."
 
-    # Build context string
+    # Build context string, flagging contested facts so the LLM caveats them
     lines = []
     for item in items:
-        lines.append(f"[{item['category']}] {item['key']}: {item['value']}")
+        line = f"[{item['category']}] {item['key']}: {item['value']}"
+        if item.get("contested"):
+            claims = brain.get("claims", {}).get(item["key"], [])
+            alts = sorted({c["value"] for c in claims if c["value"] != item["value"]})
+            line += f"  ⚠️ CONTESTED — other claims: {', '.join(a[:40] for a in alts)}"
+        lines.append(line)
     context = "\n".join(lines)
 
     org = brain.get("org_name", "the organization")
