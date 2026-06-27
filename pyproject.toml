@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "motherflame"
+version = "0.1.0"
+description = "The Org Brain CLI — harvest context from your team's AI agents"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+motherflame = "motherflame.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
