@@ -8,7 +8,7 @@
 
 [![CI](https://github.com/opelpleple/motherflame/actions/workflows/ci.yml/badge.svg)](https://github.com/opelpleple/motherflame/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
-[![Zero Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#-zero-dependencies)
+[![Dependencies](https://img.shields.io/badge/deps-1%20(audited%20crypto)-brightgreen.svg)](#-almost-zero-dependencies)
 [![MCP Compatible](https://img.shields.io/badge/MCP-compatible-8A2BE2.svg)](https://modelcontextprotocol.io)
 [![Zero-Knowledge](https://img.shields.io/badge/sync-zero--knowledge-orange.svg)](#-zero-knowledge-sync)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
@@ -171,7 +171,7 @@ Type `/` and pick from a menu, or type the command directly:
      (tool-use)    (Claude/Cursor)   (zero-knowledge sync)
 ```
 
-**Modules** (all pure-stdlib Python):
+**Modules** (stdlib Python; `sync` uses the audited `cryptography` lib):
 
 | Module | Responsibility |
 |---|---|
@@ -190,10 +190,18 @@ Type `/` and pick from a menu, or type the command directly:
 Your Org Brain is encrypted **on your machine** before it ever touches the network. The backend only ever sees ciphertext.
 
 - **Key derivation:** `scrypt(flame_key, salt)` → 32-byte key
-- **Cipher:** SHA-256 keystream in CTR mode
-- **Authentication:** HMAC-SHA256, encrypt-then-MAC
+- **Cipher:** **AES-256-GCM** (authenticated encryption) via the audited
+  [`cryptography`](https://cryptography.io) library — we deliberately do **not**
+  hand-roll crypto.
+- **Backward compat:** brains written by older versions (a hand-rolled cipher)
+  are still decryptable, but everything new is AES-GCM.
 
-Wrong key? Tampered bytes? Decryption **fails loudly** — never silently returns garbage. All built from the Python standard library, no `cryptography` dependency.
+Wrong key? Tampered bytes? Decryption **fails loudly** (GCM tag check) — never silently returns garbage.
+
+> **On dependencies:** Motherflame's only runtime dependency is `cryptography`.
+> For security-sensitive code, a single audited, widely-used crypto library is
+> the *right* call — "no crypto dependency" would mean hand-rolling primitives,
+> which is exactly what you don't want from a tool that stores company secrets.
 
 ```bash
 # Solo / single machine (default — zero setup):
@@ -259,14 +267,31 @@ Exposes three tools to the external agent: `query_brain`, `list_facts`, `add_fac
 
 ---
 
-## 🪶 Zero dependencies
+## 🪶 Almost zero dependencies
 
-The entire CLI — agent loop, encryption, MCP server, TTY pickers — is built on the **Python standard library**. Nothing to `pip install` but Motherflame itself. Clone it, read it, audit it, fork it.
+The entire CLI — agent loop, MCP server, TTY pickers, conflict engine — is built on the **Python standard library**. The **one** runtime dependency is [`cryptography`](https://cryptography.io) for AES-256-GCM, because security code should use audited primitives, not hand-rolled ones. Clone it, read it, audit it, fork it.
 
 ```python
 requires-python = ">=3.9"
-dependencies = []   # yes, really
+dependencies = ["cryptography>=42"]   # audited AES-256-GCM — the only one
 ```
+
+---
+
+## 🔒 Privacy: what leaves your machine
+
+Be deliberate about this — it's the difference between safe and sorry:
+
+- **Encrypted sync** (`push`/`pull`) only ever transmits **ciphertext**. Safe.
+- **AI harvest** sends the **contents** of the files you scan to your AI provider
+  (OpenAI/Anthropic/etc). **Bringing your own key does NOT make this private** —
+  the text leaves your machine. Motherflame masks emails/keys/cards/SSNs with
+  regex first, but **regex redaction is best-effort, not a guarantee**.
+- Motherflame asks for explicit consent before the first AI harvest, and you can
+  always choose **local keyword extraction** (nothing leaves your machine).
+
+**Do not point AI harvest at folders containing real customer PII or
+credentials.** Use keyword mode, or a local model (Ollama), for sensitive data.
 
 ---
 

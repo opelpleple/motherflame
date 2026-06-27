@@ -386,6 +386,42 @@ def _extract_text_from_html(content: str) -> str:
 # Harvest
 # ──────────────────────────────────────────────
 
+def _confirm_llm_harvest(cfg):
+    """Privacy gate: harvesting with an LLM sends file *contents* to the provider.
+    BYO-key does NOT make this private. Get explicit, informed consent the first
+    time, and let the user fall back to local keyword extraction. Returns True to
+    proceed with LLM extraction, False to use keyword-only."""
+    provider = cfg.get("provider", "your AI provider")
+    if cfg.get("llm_harvest_consent"):   # already agreed this machine
+        print(f"  {DIM}Using AI extraction ({provider}/{cfg.get('model')}) · "
+              f"PII redacted before upload{RESET}")
+        return True
+    print(f"\n  {BOLD}⚠️  Privacy notice{RESET}")
+    print(f"  AI extraction sends the {BOLD}contents{RESET} of the files you harvest to "
+          f"{BOLD}{provider}{RESET}.")
+    print(f"  {DIM}• Bringing your own API key does NOT make this private — the text leaves your machine.{RESET}")
+    print(f"  {DIM}• Emails / keys / cards / SSNs are masked first, but regex redaction is best-effort, NOT guaranteed.{RESET}")
+    print(f"  {DIM}• Do NOT point AI harvest at folders with real customer PII or credentials.{RESET}")
+    try:
+        from motherflame.agent import arrow_select
+        choice = arrow_select(
+            "How do you want to harvest?",
+            [f"Use AI extraction (send contents to {provider})",
+             "Local keyword extraction only (nothing leaves my machine)",
+             "Use AI, and don't ask again on this machine"],
+            default=1)
+    except Exception:
+        return False
+    if choice == 1:
+        print(f"  {GREEN}✓ Keyword-only — no file contents leave your machine{RESET}")
+        return False
+    if choice == 2:
+        cfg["llm_harvest_consent"] = True
+        save_config(cfg)
+    print(f"  {DIM}Proceeding with AI extraction · PII redacted before upload{RESET}")
+    return True
+
+
 def harvest_from_folder(folder, brain, globs=None, use_llm=False, cfg=None, changed_only=False):
     """Scan a folder for org signals and add them to the brain.
     If use_llm=True and cfg has an agent key, uses LLM extraction (high quality);
@@ -698,7 +734,7 @@ def cmd_start():
         # Use LLM extraction if an agent is connected (much higher quality)
         use_llm = bool(cfg.get("agent_api_key")) or cfg.get("provider") == "ollama"
         if use_llm:
-            print(f"  {DIM}Using AI extraction ({cfg.get('provider')}/{cfg.get('model')}){RESET}")
+            use_llm = _confirm_llm_harvest(cfg)
         for folder in folders:
             spinner(f"Scanning {Path(folder).name} ({scan_label})...", 1.0)
             brain, _ = harvest_from_folder(folder, brain, globs=globs, use_llm=use_llm, cfg=cfg)

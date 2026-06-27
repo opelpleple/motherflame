@@ -24,9 +24,10 @@ can fork and self-host.
 - Contested facts flagged in every query answer (no false confidence)
 
 ### Sync (zero-knowledge)
-- Client-side encryption: scrypt key derivation + SHA-256 CTR + HMAC (encrypt-then-MAC)
+- Client-side **AES-256-GCM** (authenticated encryption) via the audited
+  `cryptography` library — not hand-rolled. Legacy blobs still decrypt.
 - `push` / `pull` with **local** (default) and **git** backends for real team sync
-- Claim-union merge — no teammate's data is lost
+- Claim-union merge — no teammate's data is lost; concurrent push retries+merges
 
 ### Integrate
 - MCP server (`motherflame mcp`) — connect Claude Code / Cursor / any MCP agent

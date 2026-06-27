@@ -59,10 +59,11 @@ def test_redact_disabled_passthrough():
     assert redact.redact(txt, enabled=False)[0] == txt
 
 
-# ── sync crypto ─────────────────────────────────────────────────────────────
+# ── sync crypto (AES-256-GCM via audited cryptography lib) ──────────────────
 
 def test_crypto_roundtrip():
     blob = sync.encrypt(b"secret data", "mf_key")
+    assert blob[:3] == b"MF2"          # current authenticated-encryption format
     assert b"secret" not in blob
     assert sync.decrypt(blob, "mf_key") == b"secret data"
 
@@ -78,12 +79,26 @@ def test_crypto_wrong_key_fails():
 
 def test_crypto_tamper_detected():
     blob = bytearray(sync.encrypt(b"secret data here", "mf_key"))
-    blob[70] ^= 0xFF
+    blob[-1] ^= 0xFF                   # flip a tag byte
     try:
         sync.decrypt(bytes(blob), "mf_key")
         assert False, "should have raised"
     except ValueError:
         pass
+
+
+def test_legacy_blob_still_decrypts():
+    """Old hand-rolled-cipher blobs (no MF2 magic) must still be readable so
+    existing brains survive the crypto upgrade."""
+    import os, hashlib, hmac as _hmac
+    pt = b"legacy org data"
+    salt, nonce = os.urandom(16), os.urandom(16)
+    key = sync.derive_key("mf_key", salt)
+    ks = sync._keystream(key, nonce, len(pt))
+    ct = bytes(a ^ b for a, b in zip(pt, ks))
+    mac = _hmac.new(key, nonce + ct, hashlib.sha256).digest()
+    legacy_blob = salt + nonce + mac + ct      # old format, no magic
+    assert sync.decrypt(legacy_blob, "mf_key") == pt
 
 
 def test_merge_unions_no_loss():

@@ -2,17 +2,20 @@
 Motherflame Sync — Zero-Knowledge brain sync.
 
 The Org Brain is encrypted *client-side* with a key derived from the Flame Key
-before it ever leaves the machine. The backend only ever sees ciphertext —
-true zero-knowledge.
+before it ever leaves the machine. The backend only ever sees ciphertext.
 
-Crypto (stdlib-only, no external deps):
+Crypto:
   - Key derivation:  scrypt(flame_key, salt) → 32-byte key
-  - Cipher:          AES-free stream cipher built from SHA-256 in CTR mode
-  - Authentication:  HMAC-SHA256 over the ciphertext (encrypt-then-MAC)
+  - Cipher:          AES-256-GCM (authenticated encryption) via the audited
+                     `cryptography` library — NOT hand-rolled. AEAD gives us
+                     confidentiality + integrity in one vetted primitive.
+  - Blob format:     b"MF2" || salt(16) || nonce(12) || ciphertext+tag
 
-Backend is pluggable. The default "local" backend writes ciphertext to
-~/.motherflame/cloud/<org>.flame — a stand-in for a real ZK cloud bucket,
-so push/pull are fully testable today and swap to HTTP later.
+Older brains written with the legacy hand-rolled cipher (b"MF1"/headerless) can
+still be DECRYPTED for backward compatibility, but everything new is AES-GCM.
+
+Backend is pluggable: a local ciphertext store (default) or a git remote you
+host yourself (real team sync). The host only ever sees the encrypted blob.
 """
 from __future__ import annotations
 
@@ -25,6 +28,26 @@ from pathlib import Path
 
 CLOUD_DIR = Path.home() / ".motherflame" / "cloud"
 
+# Blob format magic. MF2 = AES-256-GCM (current). Legacy blobs have no magic.
+_MAGIC_V2 = b"MF2"
+
+
+class CryptoUnavailable(RuntimeError):
+    """Raised when the audited crypto library isn't installed. We refuse to
+    fall back to weak crypto silently — sync stops with a clear message."""
+
+
+def _aesgcm():
+    """Import AES-GCM from the audited `cryptography` lib, or fail loudly."""
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        return AESGCM
+    except ImportError as e:
+        raise CryptoUnavailable(
+            "Encrypted sync requires the 'cryptography' package "
+            "(AES-256-GCM). Install it:  pip install cryptography"
+        ) from e
+
 
 # ── Key derivation ─────────────────────────────────────────────────────────
 
@@ -33,32 +56,49 @@ def derive_key(flame_key: str, salt: bytes) -> bytes:
     return hashlib.scrypt(flame_key.encode(), salt=salt, n=2**14, r=8, p=1, dklen=32)
 
 
-# ── Stream cipher (SHA-256 CTR keystream) ──────────────────────────────────
+# ── Authenticated encryption (AES-256-GCM, audited lib) ────────────────────
+
+def encrypt(plaintext: bytes, flame_key: str) -> bytes:
+    """AES-256-GCM. Returns MF2 || salt(16) || nonce(12) || ct+tag."""
+    AESGCM = _aesgcm()
+    salt  = os.urandom(16)
+    nonce = os.urandom(12)                       # 96-bit nonce (GCM standard)
+    key   = derive_key(flame_key, salt)
+    ct    = AESGCM(key).encrypt(nonce, plaintext, None)   # ct includes the tag
+    return _MAGIC_V2 + salt + nonce + ct
+
+
+def decrypt(blob: bytes, flame_key: str) -> bytes:
+    """Verify + decrypt. AES-GCM for MF2 blobs; legacy fallback for old data.
+    Raises ValueError on wrong key / tampering."""
+    if blob[:3] == _MAGIC_V2:
+        AESGCM = _aesgcm()
+        body = blob[3:]
+        if len(body) < 16 + 12 + 16:
+            raise ValueError("ciphertext too short / corrupt")
+        salt, nonce, ct = body[:16], body[16:28], body[28:]
+        key = derive_key(flame_key, salt)
+        try:
+            from cryptography.exceptions import InvalidTag
+            return AESGCM(key).decrypt(nonce, ct, None)
+        except InvalidTag:
+            raise ValueError("authentication failed — wrong Flame Key or tampered data")
+    # ── Legacy path: decrypt brains written by the old hand-rolled cipher ──
+    return _decrypt_legacy(blob, flame_key)
+
 
 def _keystream(key: bytes, nonce: bytes, length: int) -> bytes:
-    """Generate `length` bytes of keystream by hashing key||nonce||counter."""
+    """Legacy SHA-256 CTR keystream — used ONLY to read old blobs, never to write."""
     out = bytearray()
     counter = 0
     while len(out) < length:
-        block = hashlib.sha256(key + nonce + counter.to_bytes(8, "big")).digest()
-        out.extend(block)
+        out.extend(hashlib.sha256(key + nonce + counter.to_bytes(8, "big")).digest())
         counter += 1
     return bytes(out[:length])
 
 
-def encrypt(plaintext: bytes, flame_key: str) -> bytes:
-    """Encrypt-then-MAC. Returns salt(16) || nonce(16) || mac(32) || ciphertext."""
-    salt  = os.urandom(16)
-    nonce = os.urandom(16)
-    key   = derive_key(flame_key, salt)
-    ks    = _keystream(key, nonce, len(plaintext))
-    ct    = bytes(a ^ b for a, b in zip(plaintext, ks))
-    mac   = hmac.new(key, nonce + ct, hashlib.sha256).digest()
-    return salt + nonce + mac + ct
-
-
-def decrypt(blob: bytes, flame_key: str) -> bytes:
-    """Verify MAC then decrypt. Raises ValueError if authentication fails."""
+def _decrypt_legacy(blob: bytes, flame_key: str) -> bytes:
+    """Read a pre-AES-GCM blob: salt(16)||nonce(16)||mac(32)||ct."""
     if len(blob) < 64:
         raise ValueError("ciphertext too short / corrupt")
     salt, nonce, mac, ct = blob[:16], blob[16:32], blob[32:64], blob[64:]
