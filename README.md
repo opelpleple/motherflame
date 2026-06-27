@@ -36,13 +36,13 @@ $ motherflame
   🔥 Motherflame  v0.1.0
   The Org Brain for teams that use AI
 
-🔥 TrustFinance Org Brain · 18 items
+🔥 Acme Org Brain · 18 items
 Connected: openai/gpt-4o-mini  ·  session 20260628-005937
 Type a message, '/' for commands, or /exit to quit.
 
 you › what are our pricing tiers?
-  ⚙ query_brain(topic=pricing) → [Product] pricing: 18k/48k/100k THB/year...
-ai  › Three Listing tiers: 18,000 / 48,000 / 100,000 THB per year.
+  ⚙ query_brain(topic=pricing) → [Product] pricing: Starter/Pro/Enterprise...
+ai  › Three tiers: Starter $29/mo, Pro $99/mo, Enterprise custom.
 
 you › we just raised a $2M seed round
   ⚙ add_fact(category=Company, key=seed_round, value=$2M seed) → Added

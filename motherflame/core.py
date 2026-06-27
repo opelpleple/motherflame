@@ -381,12 +381,12 @@ def harvest_from_folder(folder, brain, globs=None, use_llm=False, cfg=None, chan
     # ── Keyword fallback path (no LLM / offline) ──
     signal_patterns = [
         ("Company", "company_name", ["# ", "company:", "organization:"]),
-        ("Company", "what_we_do", ["we help", "we provide", "our mission", "ทำอะไร", "บริษัท"]),
+        ("Company", "what_we_do", ["we help", "we provide", "our mission"]),
         ("Product", "product_name", ["product:", "platform:", "tool:", "app:"]),
-        ("Product", "pricing", ["pricing", "price", "tier", "$", "baht", "บาท", "ราคา"]),
-        ("Team", "team_size", ["team of", "people", "employees", "คน", "ทีม"]),
-        ("Strategy", "goals", ["goal:", "objective:", "target:", "KPI:", "เป้าหมาย"]),
-        ("Strategy", "market", ["market:", "customer:", "audience:", "ลูกค้า", "กลุ่มเป้าหมาย"]),
+        ("Product", "pricing", ["pricing", "price", "tier", "$"]),
+        ("Team", "team_size", ["team of", "people", "employees"]),
+        ("Strategy", "goals", ["goal:", "objective:", "target:", "KPI:"]),
+        ("Strategy", "market", ["market:", "customer:", "audience:"]),
     ]
 
     for file in files[:50]:  # cap at 50 files
@@ -453,7 +453,7 @@ def cmd_connect(flame_key):
     cfg = load_config()
     cfg["api_key"]   = flame_key
     cfg["flame_key"] = flame_key
-    # Derive a friendly org name from the key if none set (mf_tf_trustfinance → TrustFinance)
+    # Derive a friendly org name from the key if none set (mf_acme_widgets → Widgets)
     if not cfg.get("org_name"):
         guess = flame_key.replace("mf_", "").split("_")[-1] or flame_key
         cfg["org_name"] = guess.capitalize()
