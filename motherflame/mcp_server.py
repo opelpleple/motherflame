@@ -75,6 +75,20 @@ def _tool_defs():
 
 # ── Tool execution (operates on the persisted brain) ───────────────────────
 
+def _readonly() -> bool:
+    """MCP write access off-switch. Set MOTHERFLAME_MCP_READONLY=1 (or
+    readonly_mcp:true in config) to expose query/list only — no writes.
+    Use this when connecting an agent you don't fully trust."""
+    import os
+    if os.environ.get("MOTHERFLAME_MCP_READONLY", "").lower() in ("1", "true", "yes"):
+        return True
+    try:
+        from motherflame.core import load_config
+        return bool(load_config().get("readonly_mcp"))
+    except Exception:
+        return False
+
+
 def _run_tool(name, args):
     from motherflame.core import load_brain, save_brain
     from motherflame.runtime import _tool_query_brain, _tool_add_fact, _tool_list_all_facts
@@ -85,6 +99,9 @@ def _run_tool(name, args):
     elif name == "list_facts":
         return _tool_list_all_facts(brain)
     elif name == "add_fact":
+        if _readonly():
+            return ("⚠️ This Org Brain is connected read-only. Writes are disabled "
+                    "(unset MOTHERFLAME_MCP_READONLY to allow add_fact).")
         result = _tool_add_fact(brain, args.get("category", "General"),
                                 args.get("key", "fact"), args.get("value", ""))
         save_brain(brain)

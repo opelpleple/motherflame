@@ -332,6 +332,43 @@ def _pick_scan_types():
     return globs, label
 
 
+def _read_doc_text(file):
+    """Read a file's text by type: PDF via _extract_pdf_text, HTML stripped,
+    everything else as utf-8. Returns '' for unreadable/binary."""
+    suf = file.suffix.lower()
+    if suf == ".pdf":
+        return _extract_pdf_text(file)
+    raw = file.read_text(encoding="utf-8", errors="ignore")
+    if suf in (".html", ".htm"):
+        return _extract_text_from_html(raw)
+    return raw
+
+
+def _extract_pdf_text(path) -> str:
+    """Extract text from a PDF. Tries the `pdftotext` CLI (poppler), then a
+    pure-Python fallback. Returns '' if neither is available — never returns
+    raw binary garbage (the old read_text bug)."""
+    import shutil, subprocess
+    # 1. pdftotext (best quality, common on Linux/mac via poppler)
+    if shutil.which("pdftotext"):
+        try:
+            out = subprocess.run(["pdftotext", "-q", str(path), "-"],
+                                 capture_output=True, text=True, timeout=30)
+            if out.returncode == 0 and out.stdout.strip():
+                return out.stdout
+        except (subprocess.SubprocessError, OSError):
+            pass
+    # 2. optional pure-Python libs if the user happens to have them
+    for mod, fn in (("pypdf", "PdfReader"), ("PyPDF2", "PdfReader")):
+        try:
+            m = __import__(mod)
+            reader = getattr(m, fn)(str(path))
+            return "\n".join((pg.extract_text() or "") for pg in reader.pages)
+        except Exception:
+            continue
+    return ""   # can't read it → skip, don't emit garbage
+
+
 def _extract_text_from_html(content: str) -> str:
     """Strip HTML tags → plain text for signal extraction."""
     import re
@@ -418,8 +455,7 @@ def harvest_from_folder(folder, brain, globs=None, use_llm=False, cfg=None, chan
                 print(f"\r  {DIM}Extracting… {i}/{len(files)} files, "
                       f"{found_count} facts{RESET}", end="", flush=True)
             try:
-                raw = file.read_text(encoding="utf-8", errors="ignore")
-                content = _extract_text_from_html(raw) if file.suffix in (".html", ".htm") else raw
+                content = _read_doc_text(file)
                 if len(content.strip()) < 30:
                     continue
                 # Strip PII/secrets before the content leaves the machine for the LLM
@@ -465,11 +501,7 @@ def harvest_from_folder(folder, brain, globs=None, use_llm=False, cfg=None, chan
     import re as _re
     for file in files[:kw_max]:
         try:
-            raw = file.read_text(encoding="utf-8", errors="ignore")
-            if file.suffix in (".html", ".htm"):
-                content = _extract_text_from_html(raw)
-            else:
-                content = raw
+            content = _read_doc_text(file)
             lines = content.split("\n")
 
             for line in lines:
@@ -690,21 +722,21 @@ def cmd_start():
         print(f"Found {harvested_count} items from the folder.")
         print(f"Still missing {len(questions_to_ask)} — let me ask a few more:\n")
 
+        from motherflame import conflicts as _cf
+        _cf.ensure_layers(brain)
         for i, (cat, key, question, default) in enumerate(questions_to_ask, 1):
             print(f"  {DIM}[{i}/{len(questions_to_ask)}]{RESET} {question}")
             answer = ask("", default)
             if answer:
-                brain.setdefault("items", []).append({
-                    "category": cat,
-                    "key": key,
-                    "value": answer,
-                    "source": "interview",
-                    "confidence": 1.0,
-                    "harvested_at": datetime.now().isoformat()
-                })
+                # Route through the claims layer (confidence 1.0 — interview is
+                # authoritative) so rebuild_canonical never drops these answers.
+                _cf.add_claim(brain, cat, key, answer,
+                              source="interview", owner=cfg.get("member_name", ""),
+                              confidence=1.0)
                 from motherflame import ledger
                 ledger.record_fact_write(cat, key, answer, source="interview", fact_id=key)
             print()
+        _cf.rebuild_canonical(brain)
 
     # ── PHASE C: Identify remaining gaps ──
     all_keys = {item["key"] for item in brain.get("items", [])}
@@ -879,6 +911,7 @@ def cmd_chat(resume=False):
         ("optimize", "Find gaps, duplicates & suggest improvements"),
         ("conflicts","Show contested facts (teammates disagree)"),
         ("resolve",  "Settle a contested fact — you pick the truth"),
+        ("forget",   "Retract a fact — tombstoned so it won't return on sync"),
         ("owner",    "Assign who owns a fact/category (their claim wins)"),
         ("sources",  "Show where a fact came from (provenance)"),
         ("history",  "Show what's been scanned & sent to the Org Brain"),
@@ -964,6 +997,25 @@ def cmd_chat(resume=False):
                 print(f"      {mark} {cand['value'][:50]}  {DIM}{cand['owner']} · {cand['source']} · conf {cand['confidence']:.2f}{RESET}")
             print()
         print(f"  {DIM}Use /resolve to settle one, or /owner to set authority.{RESET}\n")
+
+    def do_forget():
+        """Retract (tombstone) a fact — survives merges so it won't resurrect."""
+        from motherflame import conflicts
+        from motherflame.agent import arrow_select
+        conflicts.ensure_layers(brain)
+        conflicts.migrate_items_to_claims(brain)
+        keys = sorted(k for k, v in brain.get("claims", {}).items()
+                      if conflicts._live_claims(brain, k))
+        if not keys:
+            print(f"  {DIM}Nothing to forget — the brain is empty.{RESET}\n")
+            return
+        kidx = arrow_select("Forget which fact?", keys, default=0)
+        key = keys[kidx]
+        n = conflicts.retract_claim(brain, key)
+        conflicts.rebuild_canonical(brain)
+        brain["last_updated"] = _dt.now().strftime("%Y-%m-%d %H:%M")
+        save_brain(brain)
+        print(f"  {GREEN}✓ Forgot '{key}'{RESET} {DIM}({n} claim(s) tombstoned — won't return on sync){RESET}\n")
 
     def do_resolve():
         from motherflame import conflicts
@@ -1213,6 +1265,8 @@ def cmd_chat(resume=False):
                 do_conflicts()
             elif cmd == "resolve":
                 do_resolve()
+            elif cmd == "forget":
+                do_forget()
             elif cmd == "owner":
                 do_owner()
             elif cmd == "sources":

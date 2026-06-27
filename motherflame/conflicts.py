@@ -31,11 +31,21 @@ from __future__ import annotations
 
 from datetime import datetime
 
+# Bumped when brain.json's structure changes. Lets future versions migrate old
+# files instead of crashing. ensure_layers stamps this onto every brain.
+SCHEMA_VERSION = 1
+
+# Cap on live claims kept per key, to stop unbounded growth as the same fact is
+# re-harvested over months. Owner/manual/interview claims are always kept; the
+# rest are pruned oldest-first beyond this many.
+MAX_CLAIMS_PER_KEY = 12
+
 
 # ── Brain shape helpers (backward compatible) ──────────────────────────────
 
 def ensure_layers(brain: dict) -> dict:
     """Make sure the brain has claims/resolutions/owners structures."""
+    brain.setdefault("schema_version", SCHEMA_VERSION)
     brain.setdefault("items", [])          # canonical (existing behavior)
     brain.setdefault("claims", {})         # key -> [claim, ...]
     brain.setdefault("resolutions", {})    # key -> manual resolution
@@ -234,9 +244,37 @@ def resolve_key(brain: dict, key: str) -> dict:
             "chosen_claim": best}
 
 
+def prune_claims(brain: dict, max_per_key: int = MAX_CLAIMS_PER_KEY) -> int:
+    """Bound claim growth. Per key, always keep: tombstones, owner/interview/manual
+    claims, and the most recent `max_per_key` of the rest. Drops the oldest
+    low-value duplicates. Returns how many claims were removed."""
+    ensure_layers(brain)
+    removed = 0
+    owners = brain.get("owners", {})
+    for key, claims in brain.get("claims", {}).items():
+        if len(claims) <= max_per_key:
+            continue
+        owner = _owner_for(brain, claims[0].get("category", ""), key) if claims else None
+
+        def _protected(c):
+            return (c.get("retracted")
+                    or c.get("source") in ("interview", "manual")
+                    or (owner and c.get("owner") == owner))
+
+        keep = [c for c in claims if _protected(c)]
+        rest = [c for c in claims if not _protected(c)]
+        rest.sort(key=lambda c: c.get("ts", ""), reverse=True)  # newest first
+        kept_rest = rest[:max(0, max_per_key - len(keep))]
+        removed += len(rest) - len(kept_rest)
+        # preserve original-ish order: protected + kept newest
+        brain["claims"][key] = keep + kept_rest
+    return removed
+
+
 def rebuild_canonical(brain: dict) -> dict:
     """Recompute brain['items'] from claims using the resolver. Idempotent."""
     ensure_layers(brain)
+    prune_claims(brain)   # keep claim lists bounded as facts are re-harvested
     items = []
     for key, claims in brain["claims"].items():
         if not claims:

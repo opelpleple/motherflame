@@ -237,6 +237,12 @@ Motherflame speaks the [Model Context Protocol](https://modelcontextprotocol.io)
 
 Exposes three tools to the external agent: `query_brain`, `list_facts`, `add_fact`. The agent decides *when* to call them from their descriptions — e.g. it calls `query_brain` whenever it needs company-specific facts instead of guessing. Returns are token-budgeted, and contested facts are flagged so the agent never states a disputed value as settled.
 
+> **Read-only mode.** The MCP server has no transport-level auth (it's stdio,
+> local by design). If you connect an agent you don't fully trust, run it
+> read-only so it can query but not write:
+> `MOTHERFLAME_MCP_READONLY=1 motherflame mcp` (or set `readonly_mcp: true` in
+> config). `add_fact` is then refused.
+
 ---
 
 ## Why Motherflame (vs. the alternatives)

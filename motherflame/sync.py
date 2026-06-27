@@ -117,18 +117,35 @@ def push(brain: dict, flame_key: str, org_id: str, git_remote: str = None) -> di
 
     if git_remote:
         repo = _git_sync_dir(git_remote)
-        # pull latest first so we don't clobber teammates
-        _git(["pull", "--no-edit", "origin", "HEAD"], cwd=repo, check=False)
-        fpath = repo / f"{safe}.flame"
-        fpath.write_bytes(blob)
-        _git(["add", fpath.name], cwd=repo)
-        _git(["commit", "-m", f"motherflame: update {safe}"], cwd=repo, check=False)
-        pr = _git(["push", "origin", "HEAD"], cwd=repo, check=False)
-        ok = pr.returncode == 0
-        return {"ok": ok, "bytes": len(blob), "items": len(brain.get("items", [])),
+        safe_name = f"{safe}.flame"
+        fpath = repo / safe_name
+        # Retry loop: if a teammate pushed between our pull and push, re-merge
+        # their (decrypted) brain into ours and try again — no lost updates.
+        last_err = None
+        for attempt in range(4):
+            _git(["pull", "--no-edit", "-X", "ours", "origin", "HEAD"], cwd=repo, check=False)
+            # If a remote blob exists, decrypt + merge so we don't overwrite it
+            current = brain
+            if fpath.exists():
+                try:
+                    remote_brain = json.loads(decrypt(fpath.read_bytes(), flame_key))
+                    current, _ = merge_brains(brain, remote_brain)
+                except ValueError:
+                    current = brain  # wrong key / unrelated file → keep ours
+            blob = encrypt(json.dumps(current, ensure_ascii=False).encode(), flame_key)
+            fpath.write_bytes(blob)
+            _git(["add", safe_name], cwd=repo)
+            _git(["commit", "-m", f"motherflame: update {safe}"], cwd=repo, check=False)
+            pr = _git(["push", "origin", "HEAD"], cwd=repo, check=False)
+            if pr.returncode == 0:
+                return {"ok": True, "bytes": len(blob), "items": len(current.get("items", [])),
+                        "pushed_at": datetime.now().isoformat(timespec="seconds"),
+                        "backend": "git", "remote": git_remote, "attempts": attempt + 1}
+            last_err = pr.stderr.strip()
+            # non-fast-forward → loop pulls again and re-merges
+        return {"ok": False, "bytes": len(blob), "items": len(brain.get("items", [])),
                 "pushed_at": datetime.now().isoformat(timespec="seconds"),
-                "backend": "git", "remote": git_remote,
-                "error": (pr.stderr.strip() if not ok else None)}
+                "backend": "git", "remote": git_remote, "error": last_err}
 
     path = _backend_path(org_id)
     path.write_bytes(blob)
