@@ -43,8 +43,34 @@ def ensure_layers(brain: dict) -> dict:
 
 
 def _norm(value: str) -> str:
-    """Normalize a value for equality comparison (consensus / contested check)."""
-    return " ".join(str(value).lower().split())
+    """Normalize a value for equality comparison (consensus / contested check).
+
+    Goes beyond lowercase+whitespace: recognizes that '$48k', '48,000', and
+    'USD 48000' refer to the same number, so they don't register as a false
+    disagreement. Non-numeric values fall back to lowercased text.
+    """
+    s = str(value).lower().strip()
+    num = _extract_number(s)
+    if num is not None:
+        # canonical numeric form (drop trailing .0)
+        return f"#{num:g}"
+    return " ".join(s.split())
+
+
+def _extract_number(s: str):
+    """Pull a single numeric magnitude out of a string, honoring k/m/b suffixes
+    and thousands separators. Returns a float, or None if not cleanly numeric."""
+    import re
+    t = s.lower().strip()
+    # strip currency symbols / words and commas
+    t = re.sub(r"[$€£฿]|usd|thb|baht|eur|gbp", "", t)
+    t = t.replace(",", "").strip()
+    m = re.fullmatch(r"([0-9]*\.?[0-9]+)\s*([kmb])?", t)
+    if not m:
+        return None
+    val = float(m.group(1))
+    mult = {"k": 1e3, "m": 1e6, "b": 1e9}.get(m.group(2) or "", 1)
+    return val * mult
 
 
 # ── Key canonicalization ───────────────────────────────────────────────────
@@ -115,8 +141,37 @@ def add_claim(brain: dict, category: str, key: str, value: str,
     for c in claims:
         if _norm(c["value"]) == _norm(value) and c["source"] == source:
             c["ts"] = ts
+            c.pop("retracted", None)   # re-asserting un-retracts
             return
     claims.append(claim)
+
+
+def retract_claim(brain: dict, key: str, value: str = None, source: str = None) -> int:
+    """Tombstone claims for a key (a CRDT-style delete that survives merges).
+
+    A retracted claim stays in the list marked retracted=True so that a later
+    merge can't silently resurrect it. Returns how many claims were tombstoned.
+    If value/source are given, only matching claims are retracted; otherwise all
+    claims for the key are.
+    """
+    ensure_layers(brain)
+    key = canonical_key(key)
+    n = 0
+    for c in brain.get("claims", {}).get(key, []):
+        if value is not None and _norm(c["value"]) != _norm(value):
+            continue
+        if source is not None and c["source"] != source:
+            continue
+        if not c.get("retracted"):
+            c["retracted"] = True
+            c["retracted_at"] = datetime.now().isoformat()
+            n += 1
+    return n
+
+
+def _live_claims(brain: dict, key: str) -> list:
+    """Claims for a key that haven't been tombstoned."""
+    return [c for c in brain.get("claims", {}).get(key, []) if not c.get("retracted")]
 
 
 # ── Resolution ladder ──────────────────────────────────────────────────────
@@ -128,8 +183,10 @@ def _owner_for(brain: dict, category: str, key: str) -> str:
 
 
 def resolve_key(brain: dict, key: str) -> dict:
-    """Return {value, reason, contested, claim_count, chosen_claim} for one key."""
-    claims = brain.get("claims", {}).get(key, [])
+    """Return {value, reason, contested, claim_count, chosen_claim} for one key.
+    Tombstoned (retracted) claims are ignored."""
+    key = canonical_key(key)
+    claims = _live_claims(brain, key)
     if not claims:
         return {"value": None, "reason": "no claims", "contested": False,
                 "claim_count": 0, "chosen_claim": None}
@@ -226,10 +283,34 @@ def list_conflicts(brain: dict) -> list[dict]:
 def manual_resolve(brain: dict, key: str, value: str, by: str = "user", reason: str = "") -> None:
     """A human declares the canonical value for a contested key."""
     ensure_layers(brain)
-    brain["resolutions"][key] = {
+    brain["resolutions"][canonical_key(key)] = {
         "value": value, "by": by, "reason": reason,
         "ts": datetime.now().isoformat(),
     }
+
+
+def auto_resolve_all(brain: dict) -> dict:
+    """Bulk-settle every contested key that the resolver can decide on its own
+    (owner authority or consensus), leaving only genuine ambiguities — those
+    decided by the recency×confidence fallback — for manual review.
+
+    Returns {auto_resolved: [...], needs_human: [...]}. Auto-resolved keys are
+    pinned as manual resolutions (with by='auto') so they stay stable.
+    """
+    ensure_layers(brain)
+    auto, human = [], []
+    for key in list(brain.get("claims", {})):
+        r = resolve_key(brain, key)
+        if not r["contested"]:
+            continue
+        # owner/consensus give a defensible winner → pin it automatically
+        if r["reason"].startswith("owner") or r["reason"].startswith("consensus"):
+            manual_resolve(brain, key, r["value"], by="auto", reason=r["reason"])
+            auto.append({"key": key, "value": r["value"], "reason": r["reason"]})
+        else:
+            human.append({"key": key, "value": r["value"], "reason": r["reason"]})
+    rebuild_canonical(brain)
+    return {"auto_resolved": auto, "needs_human": human}
 
 
 def set_owner(brain: dict, scope: str, owner: str) -> None:

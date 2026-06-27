@@ -38,23 +38,64 @@ DEFAULT_SCAN = "both"
 # Config helpers
 # ──────────────────────────────────────────────
 
+def _atomic_write_json(path, data):
+    """Write JSON atomically: serialize to a temp file in the same dir, fsync,
+    then os.replace() (atomic on POSIX). A crash mid-write can never corrupt the
+    real file — you either get the old version or the new one, never a half-file.
+    Also keeps a .bak of the previous good version."""
+    import os, tempfile
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(data, indent=2, ensure_ascii=False)
+    # back up the last good file before replacing
+    if path.exists():
+        try:
+            (path.with_suffix(path.suffix + ".bak")).write_text(
+                path.read_text(encoding="utf-8"), encoding="utf-8")
+        except OSError:
+            pass
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp_", suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)   # atomic
+    finally:
+        if os.path.exists(tmp):
+            try: os.unlink(tmp)
+            except OSError: pass
+
+
+def _load_json_safe(path, default):
+    """Load JSON; if the file is corrupt, fall back to the .bak, else default."""
+    path = Path(path)
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            bak = path.with_suffix(path.suffix + ".bak")
+            if bak.exists():
+                try:
+                    return json.loads(bak.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    pass
+    return default() if callable(default) else default
+
+
 def load_config():
-    if CONFIG_FILE.exists():
-        return json.loads(CONFIG_FILE.read_text())
-    return {}
+    return _load_json_safe(CONFIG_FILE, dict)
 
 def save_config(cfg):
-    CONFIG_DIR.mkdir(exist_ok=True)
-    CONFIG_FILE.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
+    _atomic_write_json(CONFIG_FILE, cfg)
 
 def load_brain():
-    if BRAIN_FILE.exists():
-        return json.loads(BRAIN_FILE.read_text())
-    return {"org_name": "", "items": [], "gaps": [], "last_updated": ""}
+    return _load_json_safe(
+        BRAIN_FILE,
+        lambda: {"org_name": "", "items": [], "gaps": [], "last_updated": ""})
 
 def save_brain(brain):
-    CONFIG_DIR.mkdir(exist_ok=True)
-    BRAIN_FILE.write_text(json.dumps(brain, indent=2, ensure_ascii=False))
+    _atomic_write_json(BRAIN_FILE, brain)
 
 
 # ──────────────────────────────────────────────
@@ -356,15 +397,33 @@ def harvest_from_folder(folder, brain, globs=None, use_llm=False, cfg=None, chan
     # ── LLM extraction path (high quality) ──
     if use_llm and cfg and (cfg.get("agent_api_key") or cfg.get("provider") == "ollama"):
         from motherflame.agent import llm_extract_signals
-        from motherflame import conflicts
+        from motherflame import conflicts, redact
         conflicts.ensure_layers(brain)
         owner = cfg.get("member_name", "")   # team-unique identity (empty if solo)
-        for file in files[:30]:  # cap at 30 files for token budget
+        redact_on = cfg.get("redact_pii", True)   # default ON — privacy by default
+        redaction_total = {}
+        # Process ALL files (no silent 30-file cap). Show progress so large
+        # harvests are visibly working, not hung. A high ceiling guards against
+        # runaway cost; warn instead of silently dropping the rest.
+        MAX_FILES = int(cfg.get("max_harvest_files", 2000))
+        total = len(files)
+        if total > MAX_FILES:
+            print(f"  {DIM}Note: {total} files found; processing first {MAX_FILES} "
+                  f"(raise max_harvest_files to scan more){RESET}")
+            files = files[:MAX_FILES]
+        for i, file in enumerate(files, 1):
+            if total > 20 and (i % 10 == 0 or i == total):
+                print(f"\r  {DIM}Extracting… {i}/{len(files)} files, "
+                      f"{found_count} facts{RESET}", end="", flush=True)
             try:
                 raw = file.read_text(encoding="utf-8", errors="ignore")
                 content = _extract_text_from_html(raw) if file.suffix in (".html", ".htm") else raw
                 if len(content.strip()) < 30:
                     continue
+                # Strip PII/secrets before the content leaves the machine for the LLM
+                content, _rc = redact.redact(content, enabled=redact_on)
+                for lbl, n in _rc.items():
+                    redaction_total[lbl] = redaction_total.get(lbl, 0) + n
                 items = llm_extract_signals(cfg, content, str(file.name))
                 for item in items:
                     key = item["key"]
@@ -378,6 +437,10 @@ def harvest_from_folder(folder, brain, globs=None, use_llm=False, cfg=None, chan
                 ledger.record_file_seen(file)   # freshness fingerprint
             except Exception:
                 continue
+        if total > 20:
+            print()  # newline after progress line
+        if redaction_total:
+            print(f"  {DIM}🔒 Redacted before upload: {redact.summarize(redaction_total)}{RESET}")
         conflicts.rebuild_canonical(brain)   # recompute single source of truth
         ledger.record_scan(folder, len(files), globs, found_count)
         return brain, found_count
@@ -393,7 +456,8 @@ def harvest_from_folder(folder, brain, globs=None, use_llm=False, cfg=None, chan
         ("Strategy", "market", ["market:", "customer:", "audience:"]),
     ]
 
-    for file in files[:50]:  # cap at 50 files
+    kw_max = int(cfg.get("max_harvest_files", 2000)) if cfg else 2000
+    for file in files[:kw_max]:
         try:
             raw = file.read_text(encoding="utf-8", errors="ignore")
             if file.suffix in (".html", ".htm"):
@@ -873,10 +937,19 @@ def cmd_chat(resume=False):
         if not items:
             print(f"  {GREEN}✓ Nothing to resolve{RESET}\n")
             return
-        # pick which contested key
+        # pick which contested key (or bulk auto-resolve)
+        BULK = "⚡ Auto-resolve all (owner/consensus winners)"
         kidx = arrow_select("Which fact to settle?",
-                            [f"{c['key']} ({len(c['candidates'])} claims)" for c in items], default=0)
-        chosen = items[kidx]
+                            [BULK] + [f"{c['key']} ({len(c['candidates'])} claims)" for c in items], default=0)
+        if kidx == 0:
+            result = conflicts.auto_resolve_all(brain)
+            brain["last_updated"] = _dt.now().strftime("%Y-%m-%d %H:%M")
+            save_brain(brain)
+            na, nh = len(result["auto_resolved"]), len(result["needs_human"])
+            print(f"  {GREEN}✓ Auto-resolved {na} conflicts{RESET} "
+                  f"{DIM}({nh} still need you — re-run /resolve){RESET}\n")
+            return
+        chosen = items[kidx - 1]
         # pick the winning value
         labels = [f"{cand['value'][:45]}  ({cand['owner']} · {cand['source']})"
                   for cand in chosen["candidates"]]

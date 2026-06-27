@@ -131,17 +131,31 @@ def merge_brains(local: dict, remote: dict) -> tuple[dict, int]:
     n_new = 0
     # union claims
     for key, rclaims in remote.get("claims", {}).items():
+        ckey = conflicts.canonical_key(key)
         for rc in rclaims:
-            existing = merged["claims"].get(key, [])
-            dup = any(conflicts._norm(c["value"]) == conflicts._norm(rc["value"])
-                      and c["source"] == rc["source"] for c in existing)
-            if not dup:
+            existing = merged["claims"].get(ckey, [])
+            match = next((c for c in existing
+                          if conflicts._norm(c["value"]) == conflicts._norm(rc["value"])
+                          and c["source"] == rc["source"]), None)
+            if match is None:
                 conflicts.add_claim(merged, rc["category"], key, rc["value"],
                                     source=rc.get("source", "remote"),
                                     owner=rc.get("owner", ""),
                                     confidence=rc.get("confidence", 0.7),
                                     ts=rc.get("ts"))
+                # carry the tombstone across so a delete survives the merge
+                if rc.get("retracted"):
+                    for c in merged["claims"][ckey]:
+                        if (conflicts._norm(c["value"]) == conflicts._norm(rc["value"])
+                                and c["source"] == rc["source"]):
+                            c["retracted"] = True
+                            c["retracted_at"] = rc.get("retracted_at")
                 n_new += 1
+            else:
+                # claim exists on both sides → a tombstone on EITHER side wins
+                if rc.get("retracted") and not match.get("retracted"):
+                    match["retracted"] = True
+                    match["retracted_at"] = rc.get("retracted_at")
 
     # union owners (don't override a locally-set owner) and manual resolutions (newest wins)
     for scope, owner in remote.get("owners", {}).items():
