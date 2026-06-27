@@ -14,6 +14,7 @@ Backend is pluggable. The default "local" backend writes ciphertext to
 ~/.motherflame/cloud/<org>.flame — a stand-in for a real ZK cloud bucket,
 so push/pull are fully testable today and swap to HTTP later.
 """
+from __future__ import annotations
 
 import hashlib
 import hmac

@@ -11,6 +11,7 @@ It is intentionally conservative: it targets credentials, contact PII, and
 financial identifiers that should never train or transit, while leaving the
 business signal (pricing, team size, strategy) intact so harvest still works.
 """
+from __future__ import annotations
 
 import re
 

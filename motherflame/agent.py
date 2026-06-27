@@ -2,6 +2,7 @@
 Motherflame Agent Runtime
 Connect your own AI API → powers intelligent harvest + query
 """
+from __future__ import annotations
 
 import json
 import os

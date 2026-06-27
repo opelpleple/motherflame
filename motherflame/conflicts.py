@@ -27,6 +27,7 @@ A key is "contested" when ≥2 claims hold materially different values and no
 higher-precedence rule has settled it. Contested keys surface to the user via
 `/conflicts` and can be settled with `/resolve`.
 """
+from __future__ import annotations
 
 from datetime import datetime
 
