@@ -1,0 +1,208 @@
+"""
+Motherflame Conflict Manager — make the Org Brain a single source of truth
+even when teammates disagree.
+
+THE PROBLEM
+-----------
+Two people harvest "pricing". Peter's files say $48k, Alice's say $50k.
+A naive merge clobbers one. But which is *true*?
+
+THE MODEL
+---------
+The brain keeps TWO layers:
+
+  claims     — every competing assertion, never overwritten. Each claim records
+               who/where/when/how-confident.  (the evidence)
+  canonical  — exactly one resolved value per key.                (the truth)
+
+A resolver computes `canonical` from `claims` using a precedence ladder that
+mirrors how real orgs decide:
+
+  1. MANUAL    — a human explicitly resolved it → always wins
+  2. OWNER     — the key/category has a designated owner → owner's latest claim wins
+  3. CONSENSUS — N claims agree on the same value → that value wins
+  4. RECENCY×CONFIDENCE — newest, most-confident claim wins (fallback)
+
+A key is "contested" when ≥2 claims hold materially different values and no
+higher-precedence rule has settled it. Contested keys surface to the user via
+`/conflicts` and can be settled with `/resolve`.
+"""
+
+from datetime import datetime
+
+
+# ── Brain shape helpers (backward compatible) ──────────────────────────────
+
+def ensure_layers(brain: dict) -> dict:
+    """Make sure the brain has claims/resolutions/owners structures."""
+    brain.setdefault("items", [])          # canonical (existing behavior)
+    brain.setdefault("claims", {})         # key -> [claim, ...]
+    brain.setdefault("resolutions", {})    # key -> manual resolution
+    brain.setdefault("owners", {})         # scope (category or key) -> owner
+    return brain
+
+
+def _norm(value: str) -> str:
+    """Normalize a value for equality comparison (consensus / contested check)."""
+    return " ".join(str(value).lower().split())
+
+
+# ── Recording claims (replaces blind append) ───────────────────────────────
+
+def add_claim(brain: dict, category: str, key: str, value: str,
+              source: str = "unknown", owner: str = "", confidence: float = 0.7,
+              ts: str = None) -> None:
+    """Record a claim about `key`. Never overwrites — appends to the evidence list.
+    De-dupes identical (value, source) pairs so re-scans don't pile up."""
+    ensure_layers(brain)
+    ts = ts or datetime.now().isoformat()
+    claim = {
+        "category": category, "key": key, "value": value,
+        "source": source, "owner": owner,
+        "confidence": float(confidence), "ts": ts,
+    }
+    claims = brain["claims"].setdefault(key, [])
+    # de-dupe: same normalized value from same source → update ts only
+    for c in claims:
+        if _norm(c["value"]) == _norm(value) and c["source"] == source:
+            c["ts"] = ts
+            return
+    claims.append(claim)
+
+
+# ── Resolution ladder ──────────────────────────────────────────────────────
+
+def _owner_for(brain: dict, category: str, key: str) -> str:
+    """Resolve the authority for a key: per-key owner beats per-category owner."""
+    owners = brain.get("owners", {})
+    return owners.get(key) or owners.get(category) or ""
+
+
+def resolve_key(brain: dict, key: str) -> dict:
+    """Return {value, reason, contested, claim_count, chosen_claim} for one key."""
+    claims = brain.get("claims", {}).get(key, [])
+    if not claims:
+        return {"value": None, "reason": "no claims", "contested": False,
+                "claim_count": 0, "chosen_claim": None}
+
+    distinct = {_norm(c["value"]) for c in claims}
+    contested_raw = len(distinct) > 1
+    category = claims[0]["category"]
+
+    # 1. MANUAL — human override wins outright
+    res = brain.get("resolutions", {}).get(key)
+    if res:
+        return {"value": res["value"], "reason": f"manually set by {res.get('by','?')}",
+                "contested": False, "claim_count": len(claims),
+                "chosen_claim": None}
+
+    # 2. OWNER authority — owner's most recent claim wins
+    owner = _owner_for(brain, category, key)
+    if owner:
+        owned = [c for c in claims if c.get("owner") == owner]
+        if owned:
+            best = max(owned, key=lambda c: c["ts"])
+            # contested only if a NON-owner disagrees AND we surface it
+            return {"value": best["value"], "reason": f"owner ({owner})",
+                    "contested": contested_raw, "claim_count": len(claims),
+                    "chosen_claim": best}
+
+    # 3. CONSENSUS — a value asserted by the most distinct sources
+    by_value = {}
+    for c in claims:
+        by_value.setdefault(_norm(c["value"]), set()).add(c["source"])
+    top_val, top_sources = max(by_value.items(), key=lambda kv: len(kv[1]))
+    if len(top_sources) >= 2 and len(top_sources) > max(
+            (len(s) for v, s in by_value.items() if v != top_val), default=0):
+        chosen = next(c for c in claims if _norm(c["value"]) == top_val)
+        return {"value": chosen["value"],
+                "reason": f"consensus ({len(top_sources)} sources)",
+                "contested": False, "claim_count": len(claims),
+                "chosen_claim": chosen}
+
+    # 4. RECENCY × CONFIDENCE — newest, most-confident
+    best = max(claims, key=lambda c: (c["confidence"], c["ts"]))
+    return {"value": best["value"], "reason": "recency×confidence",
+            "contested": contested_raw, "claim_count": len(claims),
+            "chosen_claim": best}
+
+
+def rebuild_canonical(brain: dict) -> dict:
+    """Recompute brain['items'] from claims using the resolver. Idempotent."""
+    ensure_layers(brain)
+    items = []
+    for key, claims in brain["claims"].items():
+        if not claims:
+            continue
+        r = resolve_key(brain, key)
+        if r["value"] is None:
+            continue
+        items.append({
+            "category": claims[0]["category"],
+            "key": key,
+            "value": r["value"],
+            "source": (r.get("chosen_claim") or {}).get("source", "resolved"),
+            "confidence": (r.get("chosen_claim") or {}).get("confidence", 1.0),
+            "harvested_at": (r.get("chosen_claim") or {}).get("ts", datetime.now().isoformat()),
+            "resolution": r["reason"],
+            "contested": r["contested"],
+        })
+    brain["items"] = items
+    return brain
+
+
+# ── User-facing operations ─────────────────────────────────────────────────
+
+def list_conflicts(brain: dict) -> list[dict]:
+    """All keys that are currently contested (need attention)."""
+    out = []
+    for key in brain.get("claims", {}):
+        r = resolve_key(brain, key)
+        if r["contested"]:
+            claims = brain["claims"][key]
+            out.append({
+                "key": key,
+                "category": claims[0]["category"],
+                "current": r["value"],
+                "reason": r["reason"],
+                "candidates": [
+                    {"value": c["value"], "owner": c.get("owner") or "—",
+                     "source": c["source"], "confidence": c["confidence"], "ts": c["ts"]}
+                    for c in claims
+                ],
+            })
+    return out
+
+
+def manual_resolve(brain: dict, key: str, value: str, by: str = "user", reason: str = "") -> None:
+    """A human declares the canonical value for a contested key."""
+    ensure_layers(brain)
+    brain["resolutions"][key] = {
+        "value": value, "by": by, "reason": reason,
+        "ts": datetime.now().isoformat(),
+    }
+
+
+def set_owner(brain: dict, scope: str, owner: str) -> None:
+    """Assign authority. scope is a category (e.g. 'Product') or a key (e.g. 'pricing')."""
+    ensure_layers(brain)
+    brain["owners"][scope] = owner
+
+
+# ── Migration: fold legacy flat items into the claims layer ────────────────
+
+def migrate_items_to_claims(brain: dict) -> dict:
+    """One-time: turn pre-existing flat items[] into claims so old brains keep working."""
+    ensure_layers(brain)
+    for it in list(brain.get("items", [])):
+        key = it.get("key")
+        if not key:
+            continue
+        # only migrate if this key has no claims yet
+        if not brain["claims"].get(key):
+            add_claim(brain, it.get("category", "General"), key, it.get("value", ""),
+                      source=it.get("source", "legacy"),
+                      owner=it.get("owner", ""),
+                      confidence=it.get("confidence", 0.7),
+                      ts=it.get("harvested_at"))
+    return brain

@@ -107,22 +107,53 @@ def remote_exists(org_id: str) -> bool:
 
 
 def merge_brains(local: dict, remote: dict) -> tuple[dict, int]:
-    """Merge remote facts into local by key (newest wins). Returns (merged, n_new)."""
-    by_key = {it["key"]: it for it in local.get("items", [])}
-    n_new = 0
-    for it in remote.get("items", []):
-        k = it["key"]
-        if k not in by_key:
-            by_key[k] = it
-            n_new += 1
-        else:
-            # keep whichever has the newer harvested_at
-            a = by_key[k].get("harvested_at", "")
-            b = it.get("harvested_at", "")
-            if b > a:
-                by_key[k] = it
+    """Merge a teammate's brain into ours WITHOUT losing anyone's data.
+
+    Instead of clobbering by key, we union the *claims* from both brains and let
+    the conflict resolver recompute the single source of truth. A teammate's
+    $50k pricing and our $48k pricing both survive as competing claims — the
+    key becomes 'contested' and surfaces for resolution rather than silently
+    overwriting.
+
+    Returns (merged_brain, n_new_claims).
+    """
+    from motherflame import conflicts
+
     merged = dict(local)
-    merged["items"] = list(by_key.values())
-    # union of gaps
+    conflicts.ensure_layers(merged)
+    # fold any legacy flat items into claims first (both sides)
+    conflicts.migrate_items_to_claims(merged)
+
+    remote = dict(remote)
+    conflicts.ensure_layers(remote)
+    conflicts.migrate_items_to_claims(remote)
+
+    n_new = 0
+    # union claims
+    for key, rclaims in remote.get("claims", {}).items():
+        for rc in rclaims:
+            existing = merged["claims"].get(key, [])
+            dup = any(conflicts._norm(c["value"]) == conflicts._norm(rc["value"])
+                      and c["source"] == rc["source"] for c in existing)
+            if not dup:
+                conflicts.add_claim(merged, rc["category"], key, rc["value"],
+                                    source=rc.get("source", "remote"),
+                                    owner=rc.get("owner", ""),
+                                    confidence=rc.get("confidence", 0.7),
+                                    ts=rc.get("ts"))
+                n_new += 1
+
+    # union owners (don't override a locally-set owner) and manual resolutions (newest wins)
+    for scope, owner in remote.get("owners", {}).items():
+        merged["owners"].setdefault(scope, owner)
+    for key, res in remote.get("resolutions", {}).items():
+        cur = merged["resolutions"].get(key)
+        if not cur or res.get("ts", "") > cur.get("ts", ""):
+            merged["resolutions"][key] = res
+
+    # union gaps
     merged["gaps"] = sorted(set(local.get("gaps", [])) | set(remote.get("gaps", [])))
+
+    # recompute the single source of truth from all claims
+    conflicts.rebuild_canonical(merged)
     return merged, n_new

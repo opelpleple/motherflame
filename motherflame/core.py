@@ -356,6 +356,9 @@ def harvest_from_folder(folder, brain, globs=None, use_llm=False, cfg=None, chan
     # ── LLM extraction path (high quality) ──
     if use_llm and cfg and (cfg.get("agent_api_key") or cfg.get("provider") == "ollama"):
         from motherflame.agent import llm_extract_signals
+        from motherflame import conflicts
+        conflicts.ensure_layers(brain)
+        owner = cfg.get("member_name") or cfg.get("org_name", "")
         for file in files[:30]:  # cap at 30 files for token budget
             try:
                 raw = file.read_text(encoding="utf-8", errors="ignore")
@@ -365,16 +368,17 @@ def harvest_from_folder(folder, brain, globs=None, use_llm=False, cfg=None, chan
                 items = llm_extract_signals(cfg, content, str(file.name))
                 for item in items:
                     key = item["key"]
-                    if key in existing_keys:
-                        continue
-                    brain.setdefault("items", []).append(item)
-                    existing_keys.add(key)
+                    # Record as a CLAIM (never clobbers — conflict manager resolves later)
+                    conflicts.add_claim(brain, item["category"], key, item["value"],
+                                        source=str(file.name), owner=owner,
+                                        confidence=item.get("confidence", 0.85))
                     found_count += 1
                     ledger.record_fact_write(item["category"], key, item["value"],
                                              source=str(file.name), fact_id=key)
                 ledger.record_file_seen(file)   # freshness fingerprint
             except Exception:
                 continue
+        conflicts.rebuild_canonical(brain)   # recompute single source of truth
         ledger.record_scan(folder, len(files), globs, found_count)
         return brain, found_count
 
@@ -764,6 +768,9 @@ def cmd_chat(resume=False):
         ("brain",    "Show everything in the Org Brain"),
         ("gaps",     "Show what info is still missing"),
         ("optimize", "Find gaps, duplicates & suggest improvements"),
+        ("conflicts","Show contested facts (teammates disagree)"),
+        ("resolve",  "Settle a contested fact — you pick the truth"),
+        ("owner",    "Assign who owns a fact/category (their claim wins)"),
         ("sources",  "Show where a fact came from (provenance)"),
         ("history",  "Show what's been scanned & sent to the Org Brain"),
         ("status",   "Show connection & brain status"),
@@ -830,6 +837,71 @@ def cmd_chat(resume=False):
             print(f"  {GREEN}✓ {added} new facts from changed files{RESET}\n")
         else:
             print(f"  {GREEN}✓ Brain is up to date — nothing changed{RESET}\n")
+
+    def do_conflicts():
+        from motherflame import conflicts
+        conflicts.ensure_layers(brain)
+        conflicts.migrate_items_to_claims(brain)
+        items = conflicts.list_conflicts(brain)
+        if not items:
+            print(f"  {GREEN}✓ No conflicts — every fact has a clear source of truth{RESET}\n")
+            return
+        print(f"\n{BOLD}⚔️  Contested facts ({len(items)}):{RESET}\n")
+        for c in items:
+            print(f"  {BOLD}{c['key']}{RESET} {DIM}({c['category']}){RESET}")
+            print(f"    {GREEN}→ current:{RESET} {c['current']}  {DIM}[{c['reason']}]{RESET}")
+            for cand in c["candidates"]:
+                mark = "★" if cand["value"] == c["current"] else " "
+                print(f"      {mark} {cand['value'][:50]}  {DIM}{cand['owner']} · {cand['source']} · conf {cand['confidence']:.2f}{RESET}")
+            print()
+        print(f"  {DIM}Use /resolve to settle one, or /owner to set authority.{RESET}\n")
+
+    def do_resolve():
+        from motherflame import conflicts
+        from motherflame.agent import arrow_select
+        conflicts.ensure_layers(brain)
+        conflicts.migrate_items_to_claims(brain)
+        items = conflicts.list_conflicts(brain)
+        if not items:
+            print(f"  {GREEN}✓ Nothing to resolve{RESET}\n")
+            return
+        # pick which contested key
+        kidx = arrow_select("Which fact to settle?",
+                            [f"{c['key']} ({len(c['candidates'])} claims)" for c in items], default=0)
+        chosen = items[kidx]
+        # pick the winning value
+        labels = [f"{cand['value'][:45]}  ({cand['owner']} · {cand['source']})"
+                  for cand in chosen["candidates"]]
+        labels.append("✎ Type my own value")
+        vidx = arrow_select(f"True value for '{chosen['key']}':", labels, default=0)
+        if vidx == len(chosen["candidates"]):
+            value = ask("Enter the correct value", "")
+            if not value:
+                print(f"  {DIM}Cancelled{RESET}\n")
+                return
+        else:
+            value = chosen["candidates"][vidx]["value"]
+        conflicts.manual_resolve(brain, chosen["key"], value, by="you")
+        conflicts.rebuild_canonical(brain)
+        brain["last_updated"] = _dt.now().strftime("%Y-%m-%d %H:%M")
+        save_brain(brain)
+        print(f"  {GREEN}✓ '{chosen['key']}' resolved → {value}{RESET}\n")
+
+    def do_owner():
+        from motherflame import conflicts
+        scope = ask("Owner for which category or key? (e.g. Product, or pricing)", "")
+        if not scope:
+            print(f"  {DIM}Cancelled{RESET}\n")
+            return
+        owner = ask(f"Who owns '{scope}'? (name)", "")
+        if not owner:
+            print(f"  {DIM}Cancelled{RESET}\n")
+            return
+        conflicts.ensure_layers(brain)
+        conflicts.set_owner(brain, scope, owner)
+        conflicts.rebuild_canonical(brain)
+        save_brain(brain)
+        print(f"  {GREEN}✓ {owner} now owns '{scope}' — their claims win conflicts{RESET}\n")
 
     def do_plan():
         goal = ask("What do you want to accomplish?", "")
@@ -1018,6 +1090,12 @@ def cmd_chat(resume=False):
                     print(f"  {GREEN}No known gaps{RESET}\n")
             elif cmd == "optimize":
                 do_optimize()
+            elif cmd == "conflicts":
+                do_conflicts()
+            elif cmd == "resolve":
+                do_resolve()
+            elif cmd == "owner":
+                do_owner()
             elif cmd == "sources":
                 do_sources()
             elif cmd == "history":
