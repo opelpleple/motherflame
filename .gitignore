@@ -6,3 +6,4 @@ build/
 dist/
 .DS_Store
 *.flame
+.github/workflows/ci.yml

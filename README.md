@@ -6,14 +6,14 @@
 
 **Harvest your company's context once. Let every AI agent — yours, Claude, Cursor — draw on it forever.**
 
+[![CI](https://github.com/opelpleple/motherflame/actions/workflows/ci.yml/badge.svg)](https://github.com/opelpleple/motherflame/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#-zero-dependencies)
 [![MCP Compatible](https://img.shields.io/badge/MCP-compatible-8A2BE2.svg)](https://modelcontextprotocol.io)
 [![Zero-Knowledge](https://img.shields.io/badge/sync-zero--knowledge-orange.svg)](#-zero-knowledge-sync)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-v0.1.0-success.svg)](#)
 
-*Bring your own AI key. $1/seat economics. Your data never leaves your control.*
+*Bring your own AI key. Self-hosted. Your data never leaves your control.*
 
 </div>
 
@@ -63,24 +63,38 @@ you › /optimize
 ## Quickstart (under a minute)
 
 ```bash
-# 1. Install
+# 1. Install (zero dependencies — just Python 3.9+)
 git clone https://github.com/opelpleple/motherflame
-cd motherflame && pip install -e .
-
-# 2. Connect your own AI (Anthropic / OpenAI / Ollama — arrow-key picker)
-motherflame setup
-
-# 3. Connect your Org Brain
-motherflame connect mf_yourcompany
-
-# 4. Harvest context — pick folders from a checkbox list (with file counts)
-motherflame start
-
-# 5. Just run it — drops you straight into the agent
-motherflame
+cd motherflame
+python3 -m venv .venv && source .venv/bin/activate   # recommended
+pip install -e .
 ```
 
-That's it. Type `/` any time to see every command.
+> **No virtualenv?** On modern macOS/Linux a bare `pip install` may be blocked
+> (PEP 668). Either use the venv above, or `pipx install -e .`, or
+> `pip install -e . --break-system-packages`. There are no third-party deps to
+> install — only Motherflame itself.
+
+```bash
+# 2. Try it immediately — no API key, no signup
+motherflame connect          # generates a local Flame Key for you
+motherflame start            # harvest your files (keyword mode works key-free)
+motherflame                  # drop into the agent
+
+# 3. (Optional) Connect your own AI for high-quality extraction + chat
+motherflame setup            # pick Anthropic / OpenAI / Ollama, paste your key
+```
+
+That's it. Type `/` any time to see every command. See [`CONCEPTS.md`](CONCEPTS.md)
+for a glossary of terms (Flame Key, claims, contested, etc.).
+
+### Two ways to run
+
+| | No API key | With your AI key (`setup`) |
+|---|---|---|
+| Harvest | keyword extraction (works, lower precision) | LLM extraction (high quality) |
+| Chat / query | — | full agentic chat |
+| Everything else | ✅ | ✅ |
 
 ---
 
@@ -182,18 +196,27 @@ Your Org Brain is encrypted **on your machine** before it ever touches the netwo
 Wrong key? Tampered bytes? Decryption **fails loudly** — never silently returns garbage. All built from the Python standard library, no `cryptography` dependency.
 
 ```bash
-motherflame push    # encrypt locally → upload ciphertext
-motherflame pull    # download ciphertext → decrypt locally → merge (newest fact wins)
+# Solo / single machine (default — zero setup):
+motherflame push    # encrypt locally → store ciphertext in ~/.motherflame/cloud/
+motherflame pull    # decrypt locally → merge
+
+# Real team sync — point at a git repo you control:
+motherflame config set sync_remote git@github.com:yourco/org-brain.git
+motherflame push    # commits the encrypted blob to that repo
+motherflame pull    # teammates pull + merge (their claims survive, never clobbered)
 ```
+
+The git backend stores **only ciphertext** in your repo — the host (GitHub/GitLab/
+self-hosted) never sees your data. Merges union everyone's claims, so conflicting
+values surface as *contested* rather than overwriting each other.
 
 ---
 
 ## 🔌 Connect any agent (MCP)
 
-Motherflame speaks the [Model Context Protocol](https://modelcontextprotocol.io). Point Claude Code, Cursor, or any MCP client at it:
+Motherflame speaks the [Model Context Protocol](https://modelcontextprotocol.io). Add it to your MCP client's config:
 
 ```jsonc
-// MCP client config
 {
   "mcpServers": {
     "motherflame": {
@@ -204,7 +227,15 @@ Motherflame speaks the [Model Context Protocol](https://modelcontextprotocol.io)
 }
 ```
 
-Exposes three tools to the external agent: `query_brain`, `list_facts`, `add_fact`. This is what turns Motherflame from a *product* into a *protocol* — your company context, available to the whole agent ecosystem.
+**Where that config lives:**
+- **Claude Code** — run `claude mcp add motherflame -- motherflame mcp`, or edit `~/.claude.json`
+- **Claude Desktop** — `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
+- **Cursor** — `~/.cursor/mcp.json` (or Settings → MCP)
+
+> If `motherflame` isn't on your PATH (e.g. it's in a venv), use the absolute
+> path to the executable as `command` — find it with `which motherflame`.
+
+Exposes three tools to the external agent: `query_brain`, `list_facts`, `add_fact`. The agent decides *when* to call them from their descriptions — e.g. it calls `query_brain` whenever it needs company-specific facts instead of guessing. Returns are token-budgeted, and contested facts are flagged so the agent never states a disputed value as settled.
 
 ---
 
@@ -218,7 +249,7 @@ Exposes three tools to the external agent: `query_brain`, `list_facts`, `add_fac
 | **Zero-knowledge** encryption | ✅ | ❌ | ❌ | ❌ |
 | **MCP** server for any agent | ✅ | ✅ | ⚠️ | ❌ |
 | Runs as a **CLI** (scriptable) | ✅ | ❌ | ⚠️ | ❌ |
-| Pricing | **$1/seat** | $$$ | $$$$ | $$$ |
+| Cost model | **Self-hosted + your own AI key** | $$$ | $$$$ | $$$ |
 
 ---
 
@@ -239,9 +270,10 @@ dependencies = []   # yes, really
 - [x] LLM-powered harvest + freshness
 - [x] Zero-knowledge client-side encryption
 - [x] MCP server
-- [ ] HTTP cloud backend (currently a local stand-in)
+- [x] Git-based team sync (host the encrypted repo yourself)
+- [x] pytest suite + CI
 - [ ] Watch mode / git hooks — capture context as work happens
-- [ ] Per-fact access control
+- [ ] Per-member access control (today: one Flame Key = shared access)
 - [ ] Web dashboard
 
 See [`STRATEGY.md`](STRATEGY.md) for the full product thesis and gap analysis.

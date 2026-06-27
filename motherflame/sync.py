@@ -69,7 +69,13 @@ def decrypt(blob: bytes, flame_key: str) -> bytes:
     return bytes(a ^ b for a, b in zip(ct, ks))
 
 
-# ── Backend (local stand-in for ZK cloud) ──────────────────────────────────
+# ── Backends ───────────────────────────────────────────────────────────────
+# Two backends, selected per call by whether a git remote is configured:
+#   • local  — writes ciphertext to ~/.motherflame/cloud/ (single machine; the
+#              default, zero-setup, good for solo use & testing)
+#   • git    — commits/pushes ciphertext to a git remote you control, so a real
+#              team actually shares one brain. You host the repo (GitHub/GitLab/
+#              self-hosted); the server only ever sees the encrypted blob.
 
 def _backend_path(org_id: str) -> Path:
     CLOUD_DIR.mkdir(parents=True, exist_ok=True)
@@ -77,32 +83,81 @@ def _backend_path(org_id: str) -> Path:
     return CLOUD_DIR / f"{safe}.flame"
 
 
-def push(brain: dict, flame_key: str, org_id: str) -> dict:
-    """Encrypt the brain client-side and upload ciphertext. Returns receipt."""
+def _git(args, cwd, check=True):
+    import subprocess
+    return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True,
+                          text=True, check=check)
+
+
+def _git_sync_dir(remote: str) -> Path:
+    """Clone (or reuse) a local working copy of the sync remote under ~/.motherflame/sync/."""
+    import hashlib
+    base = Path.home() / ".motherflame" / "sync"
+    base.mkdir(parents=True, exist_ok=True)
+    slug = hashlib.sha1(remote.encode()).hexdigest()[:12]
+    repo = base / slug
+    if not (repo / ".git").exists():
+        _git(["clone", "--depth", "1", remote, str(repo)], cwd=base, check=False)
+        if not (repo / ".git").exists():
+            # fresh remote with nothing in it → init + set origin
+            repo.mkdir(exist_ok=True)
+            _git(["init"], cwd=repo)
+            _git(["remote", "add", "origin", remote], cwd=repo, check=False)
+    return repo
+
+
+def push(brain: dict, flame_key: str, org_id: str, git_remote: str = None) -> dict:
+    """Encrypt the brain client-side and upload ciphertext.
+    If git_remote is set, commit+push to that repo (real team sync); otherwise
+    write to the local cloud dir."""
     payload = json.dumps(brain, ensure_ascii=False).encode()
     blob = encrypt(payload, flame_key)
+    safe = "".join(c for c in org_id if c.isalnum() or c in "-_") or "org"
+
+    if git_remote:
+        repo = _git_sync_dir(git_remote)
+        # pull latest first so we don't clobber teammates
+        _git(["pull", "--no-edit", "origin", "HEAD"], cwd=repo, check=False)
+        fpath = repo / f"{safe}.flame"
+        fpath.write_bytes(blob)
+        _git(["add", fpath.name], cwd=repo)
+        _git(["commit", "-m", f"motherflame: update {safe}"], cwd=repo, check=False)
+        pr = _git(["push", "origin", "HEAD"], cwd=repo, check=False)
+        ok = pr.returncode == 0
+        return {"ok": ok, "bytes": len(blob), "items": len(brain.get("items", [])),
+                "pushed_at": datetime.now().isoformat(timespec="seconds"),
+                "backend": "git", "remote": git_remote,
+                "error": (pr.stderr.strip() if not ok else None)}
+
     path = _backend_path(org_id)
     path.write_bytes(blob)
-    return {
-        "ok": True,
-        "bytes": len(blob),
-        "items": len(brain.get("items", [])),
-        "pushed_at": datetime.now().isoformat(timespec="seconds"),
-        "location": str(path),
-    }
+    return {"ok": True, "bytes": len(blob), "items": len(brain.get("items", [])),
+            "pushed_at": datetime.now().isoformat(timespec="seconds"),
+            "backend": "local", "location": str(path)}
 
 
-def pull(flame_key: str, org_id: str) -> dict | None:
+def pull(flame_key: str, org_id: str, git_remote: str = None) -> dict | None:
     """Download ciphertext and decrypt client-side. Returns brain dict or None."""
+    safe = "".join(c for c in org_id if c.isalnum() or c in "-_") or "org"
+    if git_remote:
+        repo = _git_sync_dir(git_remote)
+        _git(["pull", "--no-edit", "origin", "HEAD"], cwd=repo, check=False)
+        fpath = repo / f"{safe}.flame"
+        if not fpath.exists():
+            return None
+        return json.loads(decrypt(fpath.read_bytes(), flame_key))
+
     path = _backend_path(org_id)
     if not path.exists():
         return None
-    blob = path.read_bytes()
-    payload = decrypt(blob, flame_key)   # raises on wrong key / tamper
-    return json.loads(payload)
+    return json.loads(decrypt(path.read_bytes(), flame_key))
 
 
-def remote_exists(org_id: str) -> bool:
+def remote_exists(org_id: str, git_remote: str = None) -> bool:
+    safe = "".join(c for c in org_id if c.isalnum() or c in "-_") or "org"
+    if git_remote:
+        repo = _git_sync_dir(git_remote)
+        return (repo / f"{safe}.flame").exists()
     return _backend_path(org_id).exists()
 
 

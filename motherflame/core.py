@@ -6,6 +6,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from motherflame import __version__
+
 # ── Paths ──────────────────────────────────────────────────────────────────
 CONFIG_DIR  = Path.home() / ".motherflame"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -149,7 +151,7 @@ def _truncate_visible(s: str, max_width: int) -> str:
 
 
 def print_banner():
-    print(f"\n{FLAME_ORANGE}{BOLD}  🔥 Motherflame{RESET}  {DIM}v0.1.0{RESET}")
+    print(f"\n{FLAME_ORANGE}{BOLD}  🔥 Motherflame{RESET}  {DIM}v{__version__}{RESET}")
     print(f"{DIM}  The Org Brain for teams that use AI{RESET}\n")
 
 
@@ -456,7 +458,11 @@ def harvest_from_folder(folder, brain, globs=None, use_llm=False, cfg=None, chan
         ("Strategy", "market", ["market:", "customer:", "audience:"]),
     ]
 
+    from motherflame import conflicts as _cf
+    _cf.ensure_layers(brain)
+    kw_owner = cfg.get("member_name", "") if cfg else ""
     kw_max = int(cfg.get("max_harvest_files", 2000)) if cfg else 2000
+    import re as _re
     for file in files[:kw_max]:
         try:
             raw = file.read_text(encoding="utf-8", errors="ignore")
@@ -467,33 +473,34 @@ def harvest_from_folder(folder, brain, globs=None, use_llm=False, cfg=None, chan
             lines = content.split("\n")
 
             for line in lines:
+                stripped = line.strip().lstrip("#").strip()
+                # Noise control: a fact value is a short-ish line, not a paragraph
+                # and not an empty/heading fragment.
+                if not (8 <= len(stripped) <= 160):
+                    continue
                 line_lower = line.lower()
                 for cat, key, keywords in signal_patterns:
                     if key in existing_keys:
                         continue
-                    for kw in keywords:
-                        if kw.lower() in line_lower and len(line.strip()) > 10:
-                            value = line.strip().lstrip("#").strip()
-                            if len(value) > 5:
-                                brain.setdefault("items", []).append({
-                                    "category": cat,
-                                    "key": key,
-                                    "value": value[:200],
-                                    "source": str(file.name),
-                                    "confidence": 0.7,
-                                    "harvested_at": datetime.now().isoformat()
-                                })
-                                existing_keys.add(key)
-                                found_count += 1
-                                ledger.record_fact_write(cat, key, value[:200],
-                                                         source=str(file.name), fact_id=key)
-                            break
+                    # whole-word match only (avoid 'team' matching 'teamwork')
+                    if any(_re.search(r"\b" + _re.escape(kw.lower().strip()) + r"\b", line_lower)
+                           for kw in keywords):
+                        # keyword facts are low-confidence — they're guesses, flagged
+                        # for review, and lose to any LLM/interview/owner claim
+                        _cf.add_claim(brain, cat, key, stripped[:160],
+                                      source=str(file.name), owner=kw_owner, confidence=0.4)
+                        existing_keys.add(key)
+                        found_count += 1
+                        ledger.record_fact_write(cat, key, stripped[:160],
+                                                 source=str(file.name), fact_id=key)
+                        break
             ledger.record_file_seen(file)   # freshness fingerprint
         except Exception:
             continue
 
     # Record the scan event in the provenance ledger
     ledger.record_scan(folder, len(files), globs, found_count)
+    _cf.rebuild_canonical(brain)   # resolve keyword claims into canonical
 
     return brain, found_count
 
@@ -516,17 +523,47 @@ INTERVIEW_QUESTIONS = [
 # Commands
 # ──────────────────────────────────────────────
 
-def cmd_connect(flame_key):
-    """motherflame connect <key> — connect to an Org Brain via Flame Key."""
+def _generate_flame_key(org_hint=""):
+    """Generate a local Flame Key — no server needed. Solo/self-hosted users get
+    a real key derived from a random token, so encryption works without signup."""
+    import secrets
+    slug = "".join(c for c in org_hint.lower() if c.isalnum()) or "org"
+    return f"mf_{slug}_{secrets.token_hex(8)}"
+
+
+def ensure_local_identity(cfg):
+    """Make sure there's a Flame Key so the app is usable WITHOUT a server.
+    If the user never ran `connect`, auto-provision a local key the first time.
+    Returns cfg (saved if changed)."""
+    if not cfg.get("flame_key"):
+        org_hint = cfg.get("org_name", "") or cfg.get("member_name", "")
+        cfg["flame_key"] = _generate_flame_key(org_hint)
+        cfg["api_key"] = cfg["flame_key"]
+        cfg.setdefault("org_name", "My Org")
+        cfg["auto_provisioned"] = True
+        save_config(cfg)
+    return cfg
+
+
+def cmd_connect(flame_key=None):
+    """motherflame connect [key] — connect to an Org Brain via Flame Key.
+    With no key, generates a local one (solo/self-hosted — no server required)."""
     cfg = load_config()
+    if not flame_key:
+        flame_key = _generate_flame_key(cfg.get("org_name", ""))
+        print(f"{GREEN}✓ Generated a local Flame Key{RESET} {DIM}(no server needed){RESET}")
+        print(f"  {BOLD}{flame_key}{RESET}")
+        print(f"  {DIM}Share this key with teammates to sync the same Org Brain.{RESET}")
     cfg["api_key"]   = flame_key
     cfg["flame_key"] = flame_key
     # Derive a friendly org name from the key if none set (mf_acme_widgets → Widgets)
-    if not cfg.get("org_name"):
-        guess = flame_key.replace("mf_", "").split("_")[-1] or flame_key
-        cfg["org_name"] = guess.capitalize()
+    if not cfg.get("org_name") or cfg.get("org_name") == "My Org":
+        parts = flame_key.replace("mf_", "").split("_")
+        guess = parts[0] if parts else flame_key
+        cfg["org_name"] = guess.capitalize() if guess else "My Org"
     cfg.setdefault("members", 1)
     cfg["connected_at"] = datetime.now().isoformat()
+    cfg.pop("auto_provisioned", None)
     save_config(cfg)
 
     brain = load_brain()
@@ -575,7 +612,7 @@ def cmd_brain():
 
 def cmd_help():
     print(f"""
-{FLAME_ORANGE}🔥 Motherflame CLI{RESET}  {DIM}v0.1.0{RESET}
+{FLAME_ORANGE}🔥 Motherflame CLI{RESET}  {DIM}v{__version__}{RESET}
 
 {BOLD}Setup:{RESET}
   {CYAN}motherflame setup{RESET}            Connect your AI API key (Anthropic/OpenAI/Ollama)
@@ -607,7 +644,7 @@ def cmd_help():
 
 def cmd_start():
     """motherflame start — harvest org context (folder scan + interview)."""
-    cfg = load_config()
+    cfg = ensure_local_identity(load_config())
     brain = load_brain()
     org = brain.get("org_name") or cfg.get("org_name") or "your org"
 
@@ -1236,11 +1273,19 @@ def cmd_push():
         return
 
     spinner("Encrypting & pushing...", 0.6)
+    git_remote = cfg.get("sync_remote")   # set to a git URL for real team sync
     try:
-        receipt = sync.push(brain, flame_key, org_id)
-        print(f"{GREEN}✓ Pushed to cloud (zero-knowledge){RESET}")
+        receipt = sync.push(brain, flame_key, org_id, git_remote=git_remote)
+        if not receipt.get("ok"):
+            print(f"{RED}✗ Push failed: {receipt.get('error','unknown')}{RESET}\n")
+            return
+        where = f"git ({git_remote})" if receipt.get("backend") == "git" else "local store"
+        print(f"{GREEN}✓ Pushed to {where} (zero-knowledge){RESET}")
         print(f"  {DIM}{receipt['items']} items · {receipt['bytes']} bytes encrypted{RESET}")
-        print(f"  {DIM}Encrypted client-side — the server never sees your data{RESET}\n")
+        print(f"  {DIM}Encrypted client-side — the server never sees your data{RESET}")
+        if receipt.get("backend") != "git":
+            print(f"  {DIM}Tip: set sync_remote to a git URL for real team sync{RESET}")
+        print()
     except Exception as e:
         print(f"{RED}✗ Push failed: {e}{RESET}\n")
 
@@ -1259,8 +1304,9 @@ def cmd_pull():
         return
 
     spinner("Pulling & decrypting...", 0.6)
+    git_remote = cfg.get("sync_remote")
     try:
-        remote = sync.pull(flame_key, org_id)
+        remote = sync.pull(flame_key, org_id, git_remote=git_remote)
     except ValueError as e:
         print(f"{RED}✗ Decryption failed: {e}{RESET}\n")
         return
@@ -1277,3 +1323,35 @@ def cmd_pull():
     save_brain(merged)
     print(f"{GREEN}✓ Pulled & merged{RESET}")
     print(f"  {DIM}{n_new} new facts from teammates · {len(merged['items'])} total{RESET}\n")
+
+
+def cmd_config(args):
+    """motherflame config get|set|list — read or set config values."""
+    cfg = load_config()
+    if not args or args[0] == "list":
+        if not cfg:
+            print(f"  {DIM}No config yet. Run 'motherflame setup' or 'motherflame connect'.{RESET}")
+            return
+        print(f"\n{BOLD}Motherflame config{RESET} {DIM}(~/.motherflame/config.json){RESET}\n")
+        SECRET = {"agent_api_key", "api_key", "flame_key"}
+        for k, v in cfg.items():
+            shown = (str(v)[:6] + "…") if k in SECRET and v else v
+            print(f"  {CYAN}{k}{RESET} = {shown}")
+        print()
+        return
+    action = args[0]
+    if action == "get":
+        if len(args) < 2:
+            print("Usage: motherflame config get <key>")
+            return
+        print(cfg.get(args[1], ""))
+    elif action == "set":
+        if len(args) < 3:
+            print("Usage: motherflame config set <key> <value>")
+            return
+        key, value = args[1], " ".join(args[2:])
+        cfg[key] = value
+        save_config(cfg)
+        print(f"  {GREEN}✓ {key} = {value}{RESET}")
+    else:
+        print(f"Unknown config action: {action} (use get/set/list)")

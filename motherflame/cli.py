@@ -4,7 +4,7 @@
 import sys
 from motherflame.core import (
     cmd_connect, cmd_status, cmd_start, cmd_brain,
-    cmd_help, cmd_setup, cmd_query, cmd_chat, cmd_push, cmd_pull,
+    cmd_help, cmd_setup, cmd_query, cmd_chat, cmd_push, cmd_pull, cmd_config,
     print_banner, load_config, load_brain, print_status_box,
 )
 
@@ -70,6 +70,9 @@ def main():
     elif cmd == "mcp":
         from motherflame.mcp_server import serve
         serve()
+
+    elif cmd == "config":
+        cmd_config(args[1:])
 
     elif cmd in ("help", "--help", "-h"):
         cmd_help()

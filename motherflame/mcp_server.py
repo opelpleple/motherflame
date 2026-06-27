@@ -18,7 +18,8 @@ import sys
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "motherflame"
-SERVER_VERSION = "0.1.0"
+from motherflame import __version__
+SERVER_VERSION = __version__
 
 
 # ── Tool catalog exposed over MCP ──────────────────────────────────────────
