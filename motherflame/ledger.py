@@ -31,7 +31,7 @@ def load_ledger():
 
 
 def save_ledger(ledger):
-    LEDGER_FILE.parent.mkdir(exist_ok=True)
+    LEDGER_FILE.parent.mkdir(parents=True, exist_ok=True)
     LEDGER_FILE.write_text(json.dumps(ledger, indent=2, ensure_ascii=False))
 
 
@@ -134,7 +134,7 @@ def _load_filestate():
 
 
 def _save_filestate(state):
-    FILESTATE_FILE.parent.mkdir(exist_ok=True)
+    FILESTATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     FILESTATE_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False))
 
 
