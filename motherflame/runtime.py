@@ -50,6 +50,17 @@ TOOLS = [
         },
     },
     {
+        "name": "verify_fact",
+        "description": "Mark a fact as human-verified. Use when the user confirms a fact is correct. Verified facts are trusted above unverified LLM-extracted ones in conflict resolution.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "key": {"type": "string", "description": "The key of the fact to verify (e.g. 'pricing')"},
+            },
+            "required": ["key"],
+        },
+    },
+    {
         "name": "list_gaps",
         "description": "List what information is still missing from the Org Brain.",
         "parameters": {"type": "object", "properties": {}, "required": []},
@@ -139,6 +150,18 @@ def _tool_forget_fact(brain, key):
     return f"Forgot '{key}' ({n} claim(s) retracted — won't return on sync)."
 
 
+def _tool_verify_fact(brain, key):
+    """Mark the current value of a fact as human-verified (a trust signal above
+    LLM confidence)."""
+    from motherflame import conflicts
+    conflicts.ensure_layers(brain)
+    n = conflicts.verify_claim(brain, key, by="chat")
+    conflicts.rebuild_canonical(brain)
+    if n == 0:
+        return f"No fact named '{key}' to verify."
+    return f"Verified '{key}' — now trusted above unverified claims."
+
+
 def _dispatch_tool(name, args, brain):
     """Run a tool by name. Returns (result_string, mutated)."""
     try:
@@ -149,6 +172,8 @@ def _dispatch_tool(name, args, brain):
                                   args.get("key", "fact"), args.get("value", "")), True
         elif name == "forget_fact":
             return _tool_forget_fact(brain, args.get("key", "")), True
+        elif name == "verify_fact":
+            return _tool_verify_fact(brain, args.get("key", "")), True
         elif name == "list_gaps":
             return _tool_list_gaps(brain), False
         elif name == "list_all_facts":

@@ -16,8 +16,27 @@ can fork and self-host.
 
 ### Single source of truth (conflict manager)
 - Two-layer brain: **claims** (evidence, never clobbered) vs **canonical** (truth)
-- Resolution ladder: manual > owner > consensus > recency×confidence
+- Resolution ladder: manual > owner > consensus > **trust score**
 - Key canonicalization — `pricing` / `price` / `pricing_model` collapse to one fact
+
+### Trust, time & governance (universal — every org's knowledge needs this)
+- **Trust scoring** per fact: source authority × human verification × staleness
+  decay × confidence — the resolver picks the most *trustworthy* claim, not just
+  the newest. (`trust.py`)
+- **`verify_fact`** — mark a fact human-verified; ranked above unverified LLM
+  claims. Exposed as a chat command, an MCP tool, and `conflicts.verify_claim`.
+- **Temporality** — claims carry `valid_from` / `valid_until`; `resolve_key(..., as_of=)`
+  answers "what was true on date X" (pricing/regulation that changed over time).
+- **Review queue** — with `review_required`, machine-extracted claims stage in a
+  pending queue for human approve/reject before entering canonical truth
+  (human-sourced claims skip the gate). `/review` command.
+
+### Coverage & quality (universal)
+- **Connector interface** (`connectors.py`) — a tiny `BaseConnector` contract +
+  registry so any source (Slack, Notion, Drive, …) can feed the harvester. Ships
+  a reference `local_files` connector; remote connectors live outside core.
+- **Eval harness** (`eval.py`) — golden Q&A → precision@k / recall / hit-rate over
+  the brain's own retrieval, so changes are measured, not guessed.
 - Value equality — `$48k` / `48,000` / `USD 48000` treated as the same number
 - Tombstones — deletes survive merges (CRDT-style)
 - `/conflicts`, `/resolve` (incl. bulk auto-resolve), `/owner` commands

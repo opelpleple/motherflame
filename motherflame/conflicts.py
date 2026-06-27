@@ -50,7 +50,70 @@ def ensure_layers(brain: dict) -> dict:
     brain.setdefault("claims", {})         # key -> [claim, ...]
     brain.setdefault("resolutions", {})    # key -> manual resolution
     brain.setdefault("owners", {})         # scope (category or key) -> owner
+    brain.setdefault("pending", [])        # review queue: claims awaiting approval
     return brain
+
+
+# ── Review queue ───────────────────────────────────────────────────────────
+# When review is enabled, machine-extracted claims (harvest/LLM) don't enter the
+# canonical truth directly — they queue in brain["pending"] for a human to
+# approve or reject. Human-sourced claims (chat/interview/manual) skip the queue.
+# Universal: any org that doesn't want unreviewed LLM facts in its brain wants this.
+
+_TRUSTED_SOURCES = {"chat", "interview", "manual", "verified"}
+
+
+def stage_or_add(brain: dict, category: str, key: str, value: str, *,
+                 source: str = "", owner: str = "", confidence: float = 0.7,
+                 review: bool = False, **extra) -> str:
+    """Add a claim, or stage it for review. Returns 'added' or 'pending'.
+    Human-sourced claims always go straight in; only machine claims are gated."""
+    ensure_layers(brain)
+    is_human = source in _TRUSTED_SOURCES
+    if review and not is_human:
+        brain["pending"].append({
+            "category": category, "key": key, "value": value, "source": source,
+            "owner": owner, "confidence": confidence,
+            "staged_at": datetime.now().isoformat(), **extra,
+        })
+        return "pending"
+    add_claim(brain, category, key, value, source=source, owner=owner,
+              confidence=confidence, **extra)
+    return "added"
+
+
+def list_pending(brain: dict) -> list:
+    ensure_layers(brain)
+    return brain.get("pending", [])
+
+
+def approve_pending(brain: dict, index: int = None) -> int:
+    """Promote pending claim(s) into the brain. index=None approves all.
+    Returns how many were approved."""
+    ensure_layers(brain)
+    pend = brain.get("pending", [])
+    if not pend:
+        return 0
+    to_approve = pend if index is None else ([pend[index]] if 0 <= index < len(pend) else [])
+    for c in to_approve:
+        add_claim(brain, c["category"], c["key"], c["value"], source=c.get("source", ""),
+                  owner=c.get("owner", ""), confidence=c.get("confidence", 0.7))
+    remaining = [c for c in pend if c not in to_approve]
+    brain["pending"] = remaining
+    rebuild_canonical(brain)
+    return len(to_approve)
+
+
+def reject_pending(brain: dict, index: int = None) -> int:
+    """Discard pending claim(s) without adding them. index=None rejects all."""
+    ensure_layers(brain)
+    pend = brain.get("pending", [])
+    n = len(pend) if index is None else (1 if 0 <= index < len(pend) else 0)
+    if index is None:
+        brain["pending"] = []
+    elif 0 <= index < len(pend):
+        pend.pop(index)
+    return n
 
 
 def _norm(value: str) -> str:
@@ -145,11 +208,13 @@ def canonical_key(key: str) -> str:
 
 def add_claim(brain: dict, category: str, key: str, value: str,
               source: str = "unknown", owner: str = "", confidence: float = 0.7,
-              ts: str = None) -> None:
+              ts: str = None, **extra) -> None:
     """Record a claim about `key`. Never overwrites — appends to the evidence list.
     De-dupes identical (value, source) pairs so re-scans don't pile up.
     The key is canonicalized so aliases (pricing/price/pricing_model) collapse
-    to one fact — otherwise disagreements would slip through as separate keys."""
+    to one fact — otherwise disagreements would slip through as separate keys.
+    `extra` carries optional fields like valid_from/valid_until (temporality)
+    or verified flags."""
     ensure_layers(brain)
     key = canonical_key(key)
     ts = ts or datetime.now().isoformat()
@@ -158,12 +223,20 @@ def add_claim(brain: dict, category: str, key: str, value: str,
         "source": source, "owner": owner,
         "confidence": float(confidence), "ts": ts,
     }
+    # carry through optional temporality / verification fields
+    for k in ("valid_from", "valid_until", "verified", "verified_by", "verified_at"):
+        if k in extra and extra[k] is not None:
+            claim[k] = extra[k]
     claims = brain["claims"].setdefault(key, [])
     # de-dupe: same normalized value from same source → update ts only
     for c in claims:
         if _norm(c["value"]) == _norm(value) and c["source"] == source:
             c["ts"] = ts
             c.pop("retracted", None)   # re-asserting un-retracts
+            # refresh temporality if provided
+            for k in ("valid_from", "valid_until"):
+                if k in extra and extra[k] is not None:
+                    c[k] = extra[k]
             return
     claims.append(claim)
 
@@ -196,7 +269,46 @@ def _live_claims(brain: dict, key: str) -> list:
     return [c for c in brain.get("claims", {}).get(key, []) if not c.get("retracted")]
 
 
+def _temporal_filter(claims: list, as_of: str = None) -> list:
+    """Keep only claims valid at `as_of` (ISO date string). A claim is valid if
+    as_of is within [valid_from, valid_until]; missing bounds are open-ended.
+    With no as_of, return claims as-is (current view)."""
+    if not as_of:
+        return claims
+    out = []
+    for c in claims:
+        vf = c.get("valid_from")
+        vu = c.get("valid_until")
+        if vf and as_of < vf:
+            continue
+        if vu and as_of > vu:
+            continue
+        out.append(c)
+    return out
+
+
 # ── Resolution ladder ──────────────────────────────────────────────────────
+
+def verify_claim(brain: dict, key: str, value: str = None, by: str = "user") -> int:
+    """Mark claim(s) for a key as human-verified — a trust signal kept separate
+    from (and above) LLM confidence. If value is given, only matching claims are
+    verified; otherwise the currently-resolved value's claims are. Returns count."""
+    ensure_layers(brain)
+    key = canonical_key(key)
+    if value is None:
+        r = resolve_key(brain, key)
+        value = r["value"]
+        if value is None:
+            return 0
+    n = 0
+    for c in _live_claims(brain, key):
+        if _norm(c["value"]) == _norm(value):
+            c["verified"] = True
+            c["verified_by"] = by
+            c["verified_at"] = datetime.now().isoformat()
+            n += 1
+    return n
+
 
 def _owner_for(brain: dict, category: str, key: str) -> str:
     """Resolve the authority for a key: per-key owner beats per-category owner."""
@@ -204,11 +316,14 @@ def _owner_for(brain: dict, category: str, key: str) -> str:
     return owners.get(key) or owners.get(category) or ""
 
 
-def resolve_key(brain: dict, key: str) -> dict:
+def resolve_key(brain: dict, key: str, as_of: str = None) -> dict:
     """Return {value, reason, contested, claim_count, chosen_claim} for one key.
-    Tombstoned (retracted) claims are ignored."""
+    Tombstoned (retracted) claims are ignored. If `as_of` (ISO date) is given,
+    only claims valid at that time are considered (temporality)."""
+    from motherflame import trust
     key = canonical_key(key)
     claims = _live_claims(brain, key)
+    claims = _temporal_filter(claims, as_of)
     if not claims:
         return {"value": None, "reason": "no claims", "contested": False,
                 "claim_count": 0, "chosen_claim": None}
@@ -248,9 +363,12 @@ def resolve_key(brain: dict, key: str) -> dict:
                 "contested": False, "claim_count": len(claims),
                 "chosen_claim": chosen}
 
-    # 4. RECENCY × CONFIDENCE — newest, most-confident
-    best = max(claims, key=lambda c: (c["confidence"], c["ts"]))
-    return {"value": best["value"], "reason": "recency×confidence",
+    # 4. TRUST SCORE — most trustworthy claim wins (source authority × human
+    #    verification × staleness decay × confidence). Ties break to the newest
+    #    claim, so a fresh correction beats an equally-trusted older value.
+    best = max(claims, key=lambda c: (trust.trust_score(c), c.get("ts", "")))
+    return {"value": best["value"],
+            "reason": f"trust score ({trust.trust_score(best):.2f})",
             "contested": contested_raw, "claim_count": len(claims),
             "chosen_claim": best}
 

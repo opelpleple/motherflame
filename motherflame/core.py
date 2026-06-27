@@ -527,6 +527,7 @@ def harvest_from_folder(folder, brain, globs=None, use_llm=False, cfg=None, chan
         redact_on = cfg.get("redact_pii", True)   # default ON — privacy by default
         redaction_total = {}
         failed_files = []
+        staged_count = 0
         # Process ALL files (no silent 30-file cap). Show progress so large
         # harvests are visibly working, not hung. A high ceiling guards against
         # runaway cost; warn instead of silently dropping the rest.
@@ -549,13 +550,18 @@ def harvest_from_folder(folder, brain, globs=None, use_llm=False, cfg=None, chan
                 for lbl, n in _rc.items():
                     redaction_total[lbl] = redaction_total.get(lbl, 0) + n
                 items = llm_extract_signals(cfg, content, str(file.name))
+                review_on = bool(cfg.get("review_required")) if cfg else False
                 for item in items:
                     key = item["key"]
-                    # Record as a CLAIM (never clobbers — conflict manager resolves later)
-                    conflicts.add_claim(brain, item["category"], key, item["value"],
-                                        source=str(file.name), owner=owner,
-                                        confidence=item.get("confidence", 0.85))
+                    # Stage for review (if enabled) or record as a CLAIM directly.
+                    # The conflict manager resolves competing claims later.
+                    status = conflicts.stage_or_add(
+                        brain, item["category"], key, item["value"],
+                        source=str(file.name), owner=owner,
+                        confidence=item.get("confidence", 0.85), review=review_on)
                     found_count += 1
+                    if status == "pending":
+                        staged_count += 1
                     ledger.record_fact_write(item["category"], key, item["value"],
                                              source=str(file.name), fact_id=key)
                 ledger.record_file_seen(file)   # freshness fingerprint
@@ -566,6 +572,9 @@ def harvest_from_folder(folder, brain, globs=None, use_llm=False, cfg=None, chan
             print()  # newline after progress line
         if redaction_total:
             print(f"  {DIM}🔒 Redacted before upload: {redact.summarize(redaction_total)}{RESET}")
+        if staged_count:
+            print(f"  {FLAME_YELLOW}📥 {staged_count} fact(s) staged for review{RESET} "
+                  f"{DIM}— approve with /review (review_required is on){RESET}")
         if failed_files:
             # Don't lose files silently — tell the user what didn't extract and why.
             print(f"  {FLAME_YELLOW}⚠️  {len(failed_files)} file(s) failed extraction "
@@ -1007,6 +1016,8 @@ def cmd_chat(resume=False):
         ("conflicts","Show contested facts (teammates disagree)"),
         ("resolve",  "Settle a contested fact — you pick the truth"),
         ("forget",   "Retract a fact — tombstoned so it won't return on sync"),
+        ("verify",   "Mark a fact as human-verified (trusted above LLM guesses)"),
+        ("review",   "Approve/reject facts staged in the review queue"),
         ("owner",    "Assign who owns a fact/category (their claim wins)"),
         ("sources",  "Show where a fact came from (provenance)"),
         ("history",  "Show what's been scanned & sent to the Org Brain"),
@@ -1092,6 +1103,57 @@ def cmd_chat(resume=False):
                 print(f"      {mark} {cand['value'][:50]}  {DIM}{cand['owner']} · {cand['source']} · conf {cand['confidence']:.2f}{RESET}")
             print()
         print(f"  {DIM}Use /resolve to settle one, or /owner to set authority.{RESET}\n")
+
+    def do_review():
+        """Approve/reject machine-extracted facts staged in the review queue."""
+        from motherflame import conflicts
+        from motherflame.agent import arrow_select
+        conflicts.ensure_layers(brain)
+        pend = conflicts.list_pending(brain)
+        if not pend:
+            print(f"  {GREEN}✓ Review queue is empty{RESET}\n")
+            return
+        print(f"\n  {BOLD}{len(pend)} fact(s) awaiting review:{RESET}")
+        for i, c in enumerate(pend, 1):
+            print(f"    {i}. [{c['category']}] {c['key']}: {c['value'][:60]} {DIM}({c.get('source','?')}){RESET}")
+        action = arrow_select("What now?",
+                              ["Approve ALL", "Reject ALL", "Decide one-by-one", "Cancel"], default=0)
+        if action == 0:
+            n = conflicts.approve_pending(brain)
+            save_brain(brain)
+            print(f"  {GREEN}✓ Approved {n} fact(s) into the brain{RESET}\n")
+        elif action == 1:
+            n = conflicts.reject_pending(brain)
+            save_brain(brain)
+            print(f"  {DIM}Rejected {n} fact(s){RESET}\n")
+        elif action == 2:
+            # iterate from the end so indices stay valid as we mutate
+            for i in range(len(pend) - 1, -1, -1):
+                c = pend[i]
+                pick = arrow_select(f"[{c['category']}] {c['key']}: {c['value'][:50]}",
+                                    ["Approve", "Reject", "Skip"], default=0)
+                if pick == 0:
+                    conflicts.approve_pending(brain, i)
+                elif pick == 1:
+                    conflicts.reject_pending(brain, i)
+            save_brain(brain)
+            print(f"  {GREEN}✓ Review complete{RESET}\n")
+
+    def do_verify():
+        """Mark a fact as human-verified (trusted above unverified LLM claims)."""
+        from motherflame import conflicts
+        from motherflame.agent import arrow_select
+        conflicts.ensure_layers(brain)
+        keys = sorted(k for k in brain.get("claims", {}) if conflicts._live_claims(brain, k))
+        if not keys:
+            print(f"  {DIM}Nothing to verify — the brain is empty.{RESET}\n")
+            return
+        kidx = arrow_select("Verify which fact?", keys, default=0)
+        key = keys[kidx]
+        n = conflicts.verify_claim(brain, key, by=cfg.get("member_name", "user"))
+        conflicts.rebuild_canonical(brain)
+        save_brain(brain)
+        print(f"  {GREEN}✓ Verified '{key}'{RESET} {DIM}({n} claim(s) — now trusted above LLM guesses){RESET}\n")
 
     def do_forget():
         """Retract (tombstone) a fact — survives merges so it won't resurrect."""
@@ -1362,6 +1424,10 @@ def cmd_chat(resume=False):
                 do_resolve()
             elif cmd == "forget":
                 do_forget()
+            elif cmd == "verify":
+                do_verify()
+            elif cmd == "review":
+                do_review()
             elif cmd == "owner":
                 do_owner()
             elif cmd == "sources":

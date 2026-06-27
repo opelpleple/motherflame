@@ -83,6 +83,19 @@ def _tool_defs():
                 "required": ["key"],
             },
         },
+        {
+            "name": "verify_fact",
+            "description": (
+                "Mark a fact as human-verified — a trust signal ranked above unverified "
+                "LLM-extracted claims in conflict resolution. Use when a human confirms "
+                "a fact is correct."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {"key": {"type": "string"}},
+                "required": ["key"],
+            },
+        },
     ]
 
 
@@ -126,6 +139,12 @@ def _run_tool(name, args):
                     "(unset MOTHERFLAME_MCP_READONLY to allow forget_fact).")
         from motherflame.runtime import _tool_forget_fact
         return update_brain(lambda b: _tool_forget_fact(b, args.get("key", "")))
+    elif name == "verify_fact":
+        if _readonly():
+            return ("⚠️ This Org Brain is connected read-only. Writes are disabled "
+                    "(unset MOTHERFLAME_MCP_READONLY to allow verify_fact).")
+        from motherflame.runtime import _tool_verify_fact
+        return update_brain(lambda b: _tool_verify_fact(b, args.get("key", "")))
     else:
         raise ValueError(f"Unknown tool: {name}")
 
