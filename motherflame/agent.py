@@ -309,21 +309,29 @@ ORG CONTEXT:
 
 
 def query_brain(cfg: dict, brain: dict, question: str) -> str:
-    """Answer a question using org brain context + LLM."""
+    """Answer a question using org brain context + LLM.
+    Uses the token budget manager to send only the most relevant facts that fit
+    the budget — not the whole brain — so cost stays bounded as the brain grows."""
+    from motherflame import tokens
+
     items = brain.get("items", [])
     if not items:
         return "Org Brain is empty — run `motherflame start` first."
 
-    # Build context string, flagging contested facts so the LLM caveats them
-    lines = []
+    # annotate contested facts with their competing values so the LLM can caveat
+    enriched = []
     for item in items:
-        line = f"[{item['category']}] {item['key']}: {item['value']}"
+        it = dict(item)
         if item.get("contested"):
             claims = brain.get("claims", {}).get(item["key"], [])
             alts = sorted({c["value"] for c in claims if c["value"] != item["value"]})
-            line += f"  ⚠️ CONTESTED — other claims: {', '.join(a[:40] for a in alts)}"
-        lines.append(line)
-    context = "\n".join(lines)
+            if alts:
+                it["value"] = f"{item['value']} (disputed; also: {', '.join(a[:40] for a in alts)})"
+        enriched.append(it)
+
+    budget = int(cfg.get("context_budget_tokens", tokens.DEFAULT_BUDGET))
+    fit = tokens.fit_facts(enriched, query=question, budget_tokens=budget)
+    context = fit["context"]
 
     org = brain.get("org_name", "the organization")
     system = QUERY_SYSTEM.format(org_name=org, context=context)

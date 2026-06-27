@@ -54,6 +54,7 @@ TOOLS = [
 # ── Tool implementations (operate on the brain dict) ───────────────────────
 
 def _tool_query_brain(brain, topic):
+    from motherflame import tokens
     topic_l = topic.lower()
     hits = []
     for item in brain.get("items", []):
@@ -61,20 +62,24 @@ def _tool_query_brain(brain, topic):
         if any(w in hay for w in topic_l.split()):
             hits.append(item)
     if not hits:
-        # fall back to returning all so the LLM can reason over them
         hits = brain.get("items", [])
-    lines = []
-    for h in hits[:25]:
-        line = f"[{h['category']}] {h['key']}: {h['value']}"
-        # Surface disputed facts so the agent answers with a caveat, not false confidence
+    if not hits:
+        return "Org Brain is empty."
+
+    # annotate contested facts with competing values, then fit to token budget
+    enriched = []
+    for h in hits:
+        it = dict(h)
         if h.get("contested"):
             claims = brain.get("claims", {}).get(h["key"], [])
-            alts = sorted({c["value"] for c in claims})
-            line += (f"  ⚠️ CONTESTED — teammates disagree; "
-                     f"current pick via {h.get('resolution','?')}. "
-                     f"Other claims: {', '.join(a[:40] for a in alts if a != h['value'])}")
-        lines.append(line)
-    return "\n".join(lines) if lines else "Org Brain is empty."
+            alts = sorted({c["value"] for c in claims if c["value"] != h["value"]})
+            if alts:
+                it["value"] = (f"{h['value']}  ⚠️CONTESTED via {h.get('resolution','?')}; "
+                               f"other claims: {', '.join(a[:40] for a in alts)}")
+        enriched.append(it)
+
+    fit = tokens.fit_facts(enriched, query=topic, budget_tokens=tokens.DEFAULT_BUDGET)
+    return fit["context"] or "Org Brain is empty."
 
 
 def _tool_add_fact(brain, category, key, value):

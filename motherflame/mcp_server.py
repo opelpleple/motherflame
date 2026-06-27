@@ -27,24 +27,38 @@ def _tool_defs():
     return [
         {
             "name": "query_brain",
-            "description": "Search the organization's Org Brain for facts about the company "
-                           "(pricing, team, product, strategy, brand voice, etc.).",
+            "description": (
+                "Look up authoritative facts about THIS organization/company from its "
+                "Org Brain. Call this whenever the user asks about, or you need to know, "
+                "company-specific details you can't infer: pricing, plans, team size, who "
+                "owns what, the product, target customers, brand voice, strategy, goals, "
+                "or internal decisions. Prefer this over guessing. Returns only the most "
+                "relevant facts (token-budgeted), and flags any that are CONTESTED."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "topic": {"type": "string", "description": "What to look up"}
+                    "topic": {"type": "string",
+                              "description": "What to look up, e.g. 'pricing tiers' or 'brand voice'"}
                 },
                 "required": ["topic"],
             },
         },
         {
             "name": "list_facts",
-            "description": "List every fact in the Org Brain, grouped by category.",
+            "description": (
+                "List the Org Brain's facts grouped by category. Use when you need a broad "
+                "overview of what the organization has recorded, not a specific lookup."
+            ),
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
             "name": "add_fact",
-            "description": "Add or update a fact in the Org Brain.",
+            "description": (
+                "Record a NEW fact about the organization in the Org Brain, or update an "
+                "existing one. Call this when the user states durable company information "
+                "worth remembering (a decision, a price change, a new hire count, etc.)."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
