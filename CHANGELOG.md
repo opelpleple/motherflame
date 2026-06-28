@@ -42,6 +42,32 @@ can fork and self-host.
 - `/conflicts`, `/resolve` (incl. bulk auto-resolve), `/owner` commands
 - Contested facts flagged in every query answer (no false confidence)
 
+### Onboarding & team UX
+- **`create` / `join`** — explicit "start a new org" vs "join an existing one".
+  `join` actually pulls + merges the team's brain (not just stores the key).
+- **`doctor`** — flame-themed readiness checklist (AI · Brain · Encryption ·
+  Knowledge · Team sync) with per-item hints and a gradient progress bar.
+- **`team`** — dashboard: Flame Key, live remote health check, members, last
+  push/pull, and a copy-paste invite block.
+- **`sync.check_remote()`** — probes a git remote (`git ls-remote`, no clone, no
+  credential prompt) and classifies reachable / auth_failed / not_found /
+  no_network, so sync problems surface instead of failing silently.
+- **`push` pulls first** — merges teammates' changes before pushing to avoid
+  clobbering; records `last_push` / `last_pull`.
+- **Launch splash** (`splash.py`) — figlet wordmark + ASCII flame box with live
+  status and a context-aware next-step hint, shown on bare `motherflame` / chat.
+
+### Security & reliability
+- **AES-256-GCM** client-side encryption via the audited `cryptography` lib
+  (replaced a hand-rolled cipher; legacy blobs still decrypt).
+- **LLM retry/backoff** on 429/529/503 across all call sites; configurable
+  `max_tokens`; tool-loop returns a final answer instead of discarding work.
+- **Harvest error visibility** — failed files are counted and reported, not
+  silently dropped. Real PDF extraction (`pdftotext`/`pypdf`).
+- **Cross-process lock** around brain read-modify-write (prevents lost updates
+  when chat + MCP write concurrently).
+- **89→ tests**, CI on Python 3.9 / 3.11 / 3.12.
+
 ### Sync (zero-knowledge)
 - Client-side **AES-256-GCM** (authenticated encryption) via the audited
   `cryptography` library — not hand-rolled. Legacy blobs still decrypt.

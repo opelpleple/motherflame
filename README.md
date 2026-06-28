@@ -129,9 +129,17 @@ The git remote is any repo you control — the host only ever stores **ciphertex
 | 📋 | **Planning** | `/plan` breaks a goal into steps, then executes them autonomously |
 | 🌾 | **Smart harvest** | LLM extraction from your files (keyword fallback when offline) |
 | ♻️ | **Freshness** | `/refresh` re-scans only files that changed since last time |
-| 🔐 | **Zero-knowledge sync** | `push`/`pull` your brain across the team — encrypted client-side |
+| ⚖️ | **Conflict resolution** | Two-layer brain (claims → canonical); a resolution ladder settles contradictions instead of last-write-wins |
+| 🏅 | **Trust scoring** | Every fact is scored by source authority × human-verification × staleness × confidence — the most *trustworthy* claim wins, not the newest |
+| ✅ | **Human verification** | `verify` marks a fact human-confirmed; ranked above unverified LLM guesses |
+| 🕰️ | **Temporality** | Facts carry `valid_from`/`valid_until`; ask "what was true on date X" |
+| 📥 | **Review queue** | Optionally gate machine-extracted facts for human approval before they enter the canonical truth |
+| 🔐 | **Zero-knowledge team sync** | `push`/`pull` your brain across the team — AES-256-GCM encrypted client-side |
 | 🔌 | **MCP server** | Connect Claude Code, Cursor, or any MCP agent to your Org Brain |
+| 🧩 | **Connectors** | A pluggable interface so any source (Slack, Notion, Drive…) can feed the brain |
+| 📊 | **Eval harness** | Golden Q&A → precision@k / recall, so retrieval changes are measured not guessed |
 | 📑 | **Provenance** | `/sources` + `/history` — know exactly what was scanned and where every fact came from |
+| 🩺 | **Doctor & Team** | `doctor` (flame-themed readiness checklist) and `team` (sync dashboard + invite) |
 | 💾 | **Sessions** | Conversations persist; resume context with `--resume` |
 
 ---
@@ -140,23 +148,28 @@ The git remote is any repo you control — the host only ever stores **ciphertex
 
 ```
 Setup
-  motherflame setup              Connect your AI key (Anthropic/OpenAI/Ollama)
-  motherflame connect <key>      Connect to your Org Brain (Flame Key)
+  motherflame setup              Connect your AI key (Anthropic / OpenAI / Ollama)
+  motherflame create [name]      Start a NEW Org Brain (generates a Flame Key)
+  motherflame join <key>         Join an EXISTING Org Brain (pulls the team's brain)
+  motherflame connect [key]      Low-level: set a Flame Key (prefer create / join)
 
 Core
-  motherflame                    Smart entry → drops into agent chat when ready
+  motherflame                    Smart entry → splash, or drops into chat when ready
+  motherflame doctor             Flame-themed readiness checklist + hints
+  motherflame team               Team dashboard: key, remote health, members, invite
   motherflame start              Harvest org context (AI extraction + interview)
-  motherflame chat [--resume]    Talk to your Org Brain agent
-  motherflame query "<q>"        One-off question
+  motherflame chat [--resume]    Talk to your Org Brain agent (tool-use, planning)
+  motherflame query "<q>"        One-off question (LLM answer, or keyword fallback)
   motherflame brain              View everything in the Org Brain
   motherflame status             Connection & brain status
 
 Sync (zero-knowledge)
-  motherflame push               Encrypt & sync your brain to the cloud
+  motherflame push               Pull-first, then encrypt & sync your brain to the remote
   motherflame pull               Pull & merge teammates' context
+  motherflame config set sync_remote <git-url>   Bind a git remote for team sync
 
 Integrate
-  motherflame mcp                Run MCP server (for Claude Code / Cursor)
+  motherflame mcp                Run MCP server (for Claude Code / Cursor / any MCP agent)
 ```
 
 ### In-chat slash commands
@@ -164,14 +177,20 @@ Integrate
 Type `/` and pick from a menu, or type the command directly:
 
 ```
-/plan       Plan a multi-step task, then execute it
-/harvest    Scan folders → add facts
-/refresh    Re-scan only changed files (freshness)
-/optimize   Find gaps, duplicates, coverage + AI suggestions
-/sources    Where each fact came from (provenance)
-/history    What's been scanned & sent to the brain
-/gaps       What's still missing
-/brain      Show the full brain
+/plan        Plan a multi-step task, then execute it
+/harvest     Scan folders → add facts
+/refresh     Re-scan only changed files (freshness)
+/optimize    Find gaps, duplicates, coverage + AI suggestions
+/conflicts   Show contested facts (teammates disagree)
+/resolve     Settle a contested fact — you pick the truth
+/verify      Mark a fact as human-verified (trusted above LLM guesses)
+/forget      Retract a fact — tombstoned so it won't return on sync
+/review      Approve/reject machine-extracted facts in the review queue
+/owner       Assign who owns a fact/category (their claim wins)
+/sources     Where each fact came from (provenance)
+/history     What's been scanned & sent to the brain
+/gaps        What's still missing
+/brain       Show the full brain
 ```
 
 ---
@@ -197,13 +216,123 @@ Type `/` and pick from a menu, or type the command directly:
 
 | Module | Responsibility |
 |---|---|
-| `core.py` | Commands, harvest, display, the interactive REPL |
-| `runtime.py` | Agentic tool-use loop + planning (OpenAI + Anthropic) |
-| `agent.py` | LLM calls, arrow/checkbox TTY pickers, providers |
+| `core.py` | Commands, harvest, display, the interactive REPL, splash/doctor/team |
+| `cli.py` | Argument dispatch + flag parsing |
+| `runtime.py` | Agentic tool-use loop + planning (OpenAI + Anthropic), retry/backoff |
+| `agent.py` | LLM calls, arrow/checkbox TTY pickers, providers, HTTP retry |
+| `conflicts.py` | Claims layer, resolution ladder, canonicalization, review queue, verify |
+| `trust.py` | Per-fact trust scoring (authority × verification × staleness × confidence) |
+| `tokens.py` | Token-budget ranking — fits the most relevant facts into context |
+| `connectors.py` | `BaseConnector` contract + registry (pluggable sources) |
+| `eval.py` | Golden Q&A retrieval eval (precision@k / recall / hit-rate) |
+| `redact.py` | Best-effort PII/secret redaction before text leaves the machine |
 | `ledger.py` | Provenance events + file fingerprints (freshness) |
 | `sessions.py` | Persistent chat history |
-| `sync.py` | Client-side encryption + cloud backend |
-| `mcp_server.py` | JSON-RPC MCP server over stdio |
+| `sync.py` | Client-side AES-256-GCM encryption, git/local backends, remote health |
+| `mcp_server.py` | JSON-RPC MCP server over stdio (query/list/add/forget/verify) |
+| `splash.py` | The launch splash screen (figlet + flame box) |
+
+---
+
+## ⚖️ Single source of truth — how contradictions are settled
+
+Most "knowledge bases" do last-write-wins: whoever saved most recently is "right".
+That quietly corrupts a shared brain. Motherflame keeps a **two-layer** model:
+
+- **Claims** — every assertion ever made about a key (raw evidence, never overwritten).
+- **Canonical** — the single resolved truth, recomputed from claims.
+
+When claims disagree, a **resolution ladder** decides — in order:
+
+1. **Manual** — a human ran `/resolve` and picked the answer. Wins outright.
+2. **Owner** — the owner of that fact/category (`/owner`) — their claim wins.
+3. **Consensus** — the value the most distinct sources independently assert.
+4. **Trust score** — the most *trustworthy* claim (see below), ties broken by recency.
+
+Keys are **canonicalized**, so `pricing` / `price` / `pricing_model` collapse to one
+fact instead of drifting into three. Values are normalized too — `$48k`, `48,000`,
+and `USD 48000` are treated as the same number.
+
+### 🏅 Trust scoring
+
+Every claim gets a score, so a fresh human-verified fact outranks a confident-but-old
+LLM guess:
+
+```
+trust = source_authority × verification_bonus × staleness_decay × confidence
+```
+
+- **Source authority** — `manual`/`verified` (human) > `chat` > `interview` > file/keyword.
+- **Verification** — `verify` a fact and it's ranked above anything unverified.
+- **Staleness** — trust decays as a claim ages (configurable half-life).
+- **Confidence** — the extractor's own 0–1 score.
+
+### 🕰️ Temporality
+
+Claims can carry `valid_from` / `valid_until`. Ask the brain what was true at a point
+in time — essential when pricing, headcount, or policy changes over a year:
+
+```python
+resolve_key(brain, "pricing", as_of="2024-06-01")   # → last year's price
+```
+
+### 📥 Review queue
+
+Turn on `review_required` and **machine-extracted** facts land in a pending queue for
+a human to approve or reject before they enter the canonical truth. Human-sourced
+claims (chat / interview / manual) skip the gate. Manage it with `/review`.
+
+### ♻️ Tombstones (CRDT-style delete)
+
+`/forget` doesn't just delete — it tombstones, so a teammate's stale copy can't
+resurrect the fact on the next sync.
+
+---
+
+## 🧩 Connectors — feed the brain from anywhere
+
+Local files are one source; real org knowledge also lives in Slack, Notion, Drive,
+Jira, email. Rather than hard-code each, Motherflame defines a tiny contract:
+
+```python
+from motherflame.connectors import BaseConnector, Document, register
+
+@register
+class MyConnector(BaseConnector):
+    name = "my_source"
+    def fetch(self):
+        yield Document(title="Q3 Plan", text="...", source_id="notion:abc")
+```
+
+Core ships a reference `local_files` connector; remote connectors live outside core
+so the CLI stays lean. Every `Document` flows through the same extraction, redaction,
+claims, and review-queue path — so trust/temporality/PII guarantees apply uniformly.
+
+---
+
+## 📊 Eval harness — measure, don't guess
+
+A brain is only worth feeding to agents if it retrieves the *right* facts. Point a
+golden Q&A set at it and get precision@k / recall / hit-rate over the brain's own
+retrieval — so you can tell whether a change (new aliases, trust weighting) actually
+helped:
+
+```python
+from motherflame import eval as mf_eval
+report = mf_eval.run(brain, golden, k=3)
+print(mf_eval.format_report(report))
+```
+
+---
+
+## 🩺 Doctor & 👥 Team
+
+```bash
+motherflame doctor   # flame-themed readiness checklist: AI · Brain · Encryption ·
+                     # Knowledge · Team sync — each lit or a dim ember, with a hint
+motherflame team     # dashboard: Flame Key, remote health (live), members, last
+                     # sync, and a copy-paste invite block for teammates
+```
 
 ---
 
@@ -265,13 +394,18 @@ Motherflame speaks the [Model Context Protocol](https://modelcontextprotocol.io)
 > If `motherflame` isn't on your PATH (e.g. it's in a venv), use the absolute
 > path to the executable as `command` — find it with `which motherflame`.
 
-Exposes three tools to the external agent: `query_brain`, `list_facts`, `add_fact`. The agent decides *when* to call them from their descriptions — e.g. it calls `query_brain` whenever it needs company-specific facts instead of guessing. Returns are token-budgeted, and contested facts are flagged so the agent never states a disputed value as settled.
+Exposes five tools to the external agent: `query_brain`, `list_facts`, `add_fact`,
+`forget_fact`, and `verify_fact`. The agent decides *when* to call them from their
+descriptions — e.g. it calls `query_brain` whenever it needs company-specific facts
+instead of guessing, or `add_fact` to write something it learned back into the brain.
+Returns are token-budgeted and carry **provenance** (`[source: …]`), and contested
+facts are flagged so the agent never states a disputed value as settled.
 
 > **Read-only mode.** The MCP server has no transport-level auth (it's stdio,
 > local by design). If you connect an agent you don't fully trust, run it
 > read-only so it can query but not write:
 > `MOTHERFLAME_MCP_READONLY=1 motherflame mcp` (or set `readonly_mcp: true` in
-> config). `add_fact` is then refused.
+> config). All write tools (`add_fact`, `forget_fact`, `verify_fact`) are then refused.
 
 ---
 
@@ -283,6 +417,8 @@ Exposes three tools to the external agent: `query_brain`, `list_facts`, `add_fac
 | **No migration** into a new workspace | ✅ | ❌ | ❌ | ❌ |
 | **Bring-your-own-AI** key | ✅ | ❌ | ❌ | ❌ |
 | **Zero-knowledge** encryption | ✅ | ❌ | ❌ | ❌ |
+| **Conflict resolution** (claims → canonical) | ✅ | ❌ | ❌ | ❌ |
+| **Trust scoring** on each fact | ✅ | ❌ | ❌ | ❌ |
 | **MCP** server for any agent | ✅ | ✅ | ⚠️ | ❌ |
 | Runs as a **CLI** (scriptable) | ✅ | ❌ | ⚠️ | ❌ |
 | Cost model | **Self-hosted + your own AI key** | $$$ | $$$$ | $$$ |
@@ -319,14 +455,24 @@ credentials.** Use keyword mode, or a local model (Ollama), for sensitive data.
 
 ## Roadmap
 
+**Shipped**
 - [x] Agent chat with tool-use + planning
 - [x] LLM-powered harvest + freshness
-- [x] Zero-knowledge client-side encryption
-- [x] MCP server
+- [x] Zero-knowledge client-side encryption (AES-256-GCM)
+- [x] MCP server (query / list / add / forget / verify)
 - [x] Git-based team sync (host the encrypted repo yourself)
-- [x] pytest suite + CI
+- [x] Conflict resolution: claims → canonical, resolution ladder, tombstones
+- [x] Trust scoring, human verification, temporality, review queue
+- [x] Connector interface + reference local-files connector
+- [x] Eval harness (golden Q&A → precision@k)
+- [x] `create` / `join` onboarding, `doctor`, `team` dashboard, launch splash
+- [x] pytest suite + CI (Python 3.9 / 3.11 / 3.12)
+
+**Planned**
+- [ ] Live connectors (Slack / Notion / Drive / Jira) on the connector interface
+- [ ] Semantic / vector retrieval (today: keyword + token-budget ranking)
 - [ ] Watch mode / git hooks — capture context as work happens
-- [ ] Per-member access control (today: one Flame Key = shared access)
+- [ ] Per-member identity & access control (today: one Flame Key = shared access)
 - [ ] Web dashboard
 
 See [`STRATEGY.md`](STRATEGY.md) for the full product thesis and gap analysis.
