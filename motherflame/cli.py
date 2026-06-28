@@ -5,7 +5,7 @@ import sys
 from motherflame.core import (
     cmd_connect, cmd_create, cmd_join, cmd_status, cmd_doctor, cmd_team, cmd_start, cmd_brain,
     cmd_help, cmd_setup, cmd_query, cmd_chat, cmd_push, cmd_pull, cmd_config,
-    print_banner, load_config, load_brain, print_status_box,
+    print_banner, print_splash, load_config, load_brain, print_status_box,
 )
 
 
@@ -34,8 +34,7 @@ def main():
         if has_agent and has_brain:
             cmd_chat()
         else:
-            print_banner()
-            print_status_box(cfg, brain)
+            print_splash()
         return
 
     cmd = args[0].lower()

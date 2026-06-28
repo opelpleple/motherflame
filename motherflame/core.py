@@ -205,8 +205,18 @@ def _truncate_visible(s: str, max_width: int) -> str:
 
 
 def print_banner():
+    """Lightweight one-line banner (used by sub-commands like status/help/start)."""
     print(f"\n{FLAME_ORANGE}{BOLD}  🔥 Motherflame{RESET}  {DIM}v{__version__}{RESET}")
     print(f"{DIM}  The Org Brain for teams that use AI{RESET}\n")
+
+
+def print_splash():
+    """Big launch splash (figlet + flame box). Shown on bare `motherflame`."""
+    try:
+        from motherflame import splash
+        print(splash.render_splash(load_config(), load_brain()))
+    except Exception:
+        print_banner()
 
 
 def print_status_box(cfg, brain):
@@ -1299,8 +1309,7 @@ def cmd_chat(resume=False):
                     history.append({"role": m["role"], "content": m["text"]})
                 print(f"{DIM}Resumed session {prev} ({len(history)} messages){RESET}")
 
-    print_banner()
-    print(f"{FLAME_ORANGE}🔥{RESET} {BOLD}{org} Org Brain{RESET} {DIM}· {n_items} items{RESET}")
+    print_splash()
     print(f"{DIM}Connected: {provider}/{model}  ·  session {session_id}{RESET}")
     print(f"{DIM}Type a message, '/' for commands, or /exit to quit.{RESET}\n")
 
