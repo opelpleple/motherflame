@@ -257,13 +257,28 @@ def add_claim(brain: dict, category: str, key: str, value: str,
     key = canonical_key(key)
     category = canonical_category(category)
     ts = ts or datetime.now().isoformat()
+    # sensitivity: explicit > inferred. Public web defaults to 'public'; anything
+    # from local/confidential/interview defaults to 'internal' unless told otherwise.
+    sensitivity = extra.get("sensitivity")
+    if not sensitivity:
+        s = (source or "").lower()
+        if s.startswith(("http://", "https://")):
+            sensitivity = "public"
+        elif s in ("confidential",):
+            sensitivity = "confidential"
+        elif s in ("local_memory", "interview", "manual"):
+            sensitivity = "internal"
+        else:
+            sensitivity = "public"
     claim = {
         "category": category, "key": key, "value": value,
         "source": source, "owner": owner,
         "confidence": float(confidence), "ts": ts,
+        "sensitivity": sensitivity,
     }
     # carry through optional temporality / verification fields
-    for k in ("valid_from", "valid_until", "verified", "verified_by", "verified_at"):
+    for k in ("valid_from", "valid_until", "verified", "verified_by", "verified_at",
+              "via", "mcp_client", "original_source", "last_verified_at"):
         if k in extra and extra[k] is not None:
             claim[k] = extra[k]
     claims = brain["claims"].setdefault(key, [])
@@ -450,18 +465,41 @@ def rebuild_canonical(brain: dict) -> dict:
         r = resolve_key(brain, key)
         if r["value"] is None:
             continue
+        chosen = r.get("chosen_claim") or {}
+        # sensitivity of the canonical fact = the most restrictive among live claims
+        levels = {"public": 0, "internal": 1, "confidential": 2}
+        max_sens = "public"
+        for c in claims:
+            s = c.get("sensitivity", "public")
+            if levels.get(s, 0) > levels.get(max_sens, 0):
+                max_sens = s
         items.append({
             "category": claims[0]["category"],
             "key": key,
             "value": r["value"],
-            "source": (r.get("chosen_claim") or {}).get("source", "resolved"),
-            "confidence": (r.get("chosen_claim") or {}).get("confidence", 1.0),
-            "harvested_at": (r.get("chosen_claim") or {}).get("ts", datetime.now().isoformat()),
+            "source": chosen.get("source", "resolved"),
+            "confidence": chosen.get("confidence", 1.0),
+            "harvested_at": chosen.get("ts", datetime.now().isoformat()),
             "resolution": r["reason"],
             "contested": r["contested"],
+            "sensitivity": max_sens,
+            "last_verified_at": chosen.get("last_verified_at") or chosen.get("verified_at"),
         })
     brain["items"] = items
     return brain
+
+
+def has_confidential(brain: dict) -> bool:
+    """True if any live claim or document is marked confidential — used to warn
+    before sync/push so private knowledge isn't shared unknowingly."""
+    for claims in brain.get("claims", {}).values():
+        for c in claims:
+            if c.get("sensitivity") == "confidential" and not c.get("retracted"):
+                return True
+    for d in brain.get("documents", {}).values():
+        if d.get("sensitivity") == "confidential":
+            return True
+    return False
 
 
 # ── User-facing operations ─────────────────────────────────────────────────

@@ -1165,6 +1165,48 @@ def cmd_docs(action=None, arg=None):
     print(f"\n  {DIM}View: {CYAN}motherflame docs show <id>{RESET}\n")
 
 
+def cmd_absorb(path=None):
+    """motherflame absorb <path> — ingest local knowledge (memory files, vault
+    notes, project docs) into the Org Brain with the right authority + sensitivity.
+
+    Local/confidential knowledge outranks public web copy; confidential files are
+    tagged (and never silently synced). Extracted facts go to the review queue."""
+    from motherflame import localsync, conflicts
+    cfg = load_config()
+    brain = load_brain()
+
+    if not path:
+        path = ask("Path to absorb (folder or file)", str(Path.home()))
+    path = (path or "").strip()
+    if not path:
+        print(f"{DIM}No path given.{RESET}")
+        return
+
+    has_ai = bool(cfg.get("agent_api_key")) or cfg.get("provider") == "ollama"
+    print(f"\n{BOLD}{FLAME_ORANGE}🧲 Absorbing {path}{RESET}")
+    print(f"{DIM}Reading local files (never the network). "
+          f"{'Extracting facts with ' + str(cfg.get('provider')) if has_ai else 'No AI key — storing documents only'}.{RESET}\n")
+
+    files = localsync.discover(path)
+    if not files:
+        print(f"{RED}✗ No readable knowledge files (.md/.txt) found there.{RESET}\n")
+        return
+    print(f"{DIM}Found {len(files)} file(s). Absorbing...{RESET}")
+
+    summary = localsync.absorb(brain, cfg, path)
+    conflicts.rebuild_canonical(brain)
+    save_brain(brain)
+
+    print(f"\n{GREEN}{BOLD}✓ Absorbed {summary['documents']} document(s){RESET}")
+    if summary["facts_staged"]:
+        print(f"  {FLAME_YELLOW}{summary['facts_staged']} facts staged for review{RESET} "
+              f"{DIM}— confirm with {CYAN}motherflame review{RESET}")
+    if summary["confidential_docs"]:
+        print(f"  {RED}⚠️  {summary['confidential_docs']} confidential file(s){RESET} "
+              f"{DIM}— tagged, will warn before push{RESET}")
+    print(f"  {DIM}Local knowledge now outranks public-web facts in conflicts.{RESET}\n")
+
+
 def cmd_reindex():
     """motherflame reindex — (re)build semantic embeddings for all facts + document
     chunks so semantic search is fast. Uses the configured embedding provider."""
@@ -1241,6 +1283,7 @@ def cmd_help():
   {CYAN}motherflame status{RESET}           Show connection & brain status
   {CYAN}motherflame start{RESET}            Harvest org context (web research + files + interview)
   {CYAN}motherflame research <url>{RESET}   Research a company website → confirm facts → brain
+  {CYAN}motherflame absorb <path>{RESET}    Ingest LOCAL knowledge (memory/notes/docs) w/ authority+sensitivity
   {CYAN}motherflame docs{RESET}             Long-form documents: list / show <id> / add <file>
   {CYAN}motherflame reindex{RESET}          Build semantic embeddings (then: config set retrieval semantic)
   {CYAN}motherflame brain{RESET}            View what's in your Org Brain
@@ -1989,6 +2032,20 @@ def cmd_push():
     if not brain.get("items"):
         print(f"{RED}✗ Org Brain is empty — nothing to push.{RESET}")
         return
+
+    # Sensitivity guard: warn before sharing confidential knowledge with the team.
+    from motherflame import conflicts as _c
+    if _c.has_confidential(brain):
+        n = sum(1 for cl in brain.get("claims", {}).values()
+                for c in cl if c.get("sensitivity") == "confidential" and not c.get("retracted"))
+        n += sum(1 for d in brain.get("documents", {}).values()
+                 if d.get("sensitivity") == "confidential")
+        print(f"{RED}⚠️  This brain contains {n} confidential item(s).{RESET}")
+        print(f"  {DIM}Push encrypts everything, but anyone with the Flame Key can decrypt it.{RESET}")
+        ans = ask(f"  Push confidential knowledge to the team? (yes/no)", "no")
+        if ans.strip().lower() not in ("yes", "y"):
+            print(f"  {DIM}Aborted. Tip: keep confidential facts in a local-only brain.{RESET}\n")
+            return
 
     spinner("Encrypting & pushing...", 0.6)
     git_remote = cfg.get("sync_remote")   # set to a git URL for real team sync

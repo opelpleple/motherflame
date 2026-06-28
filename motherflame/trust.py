@@ -23,17 +23,24 @@ from datetime import datetime
 
 # Source authority weights — how much we trust a claim by where it came from.
 SOURCE_AUTHORITY = {
-    "manual": 1.0,        # a human ran /resolve
-    "interview": 0.95,    # a human answered the onboarding interview
-    "chat": 0.9,          # a human typed it to the agent / via MCP
-    "verified": 1.0,      # explicitly human-verified (see verify)
+    "manual": 1.0,         # a human ran /resolve
+    "verified": 1.0,       # explicitly human-verified (see verify)
+    "confidential": 0.97,  # internal/confidential local knowledge (private docs)
+    "interview": 0.95,     # a human answered the onboarding interview
+    "local_memory": 0.92,  # absorbed from the user's own machine (memory/vault)
+    "chat": 0.9,           # a human typed it to the agent / via MCP
 }
 DEFAULT_SOURCE_AUTHORITY = 0.6   # an extracted fact from a document
 KEYWORD_AUTHORITY = 0.35         # low-precision keyword fallback guess
+PUBLIC_WEB_AUTHORITY = 0.5       # public marketing site — informative, not authoritative
 
 # Half-life for staleness decay, in days. After this long, the age component of
 # trust has halved. Tuned for business facts that drift over a quarter.
 STALENESS_HALFLIFE_DAYS = 180.0
+
+
+def _is_public_web(src: str) -> bool:
+    return src.startswith(("http://", "https://"))
 
 
 def _source_authority(claim: dict) -> float:
@@ -42,6 +49,10 @@ def _source_authority(claim: dict) -> float:
     src = (claim.get("source") or "").lower()
     if src in SOURCE_AUTHORITY:
         return SOURCE_AUTHORITY[src]
+    # public website: capped below internal sources so marketing copy can't
+    # outrank confidential/local truth even when it's newer.
+    if _is_public_web(src):
+        return PUBLIC_WEB_AUTHORITY
     # keyword-fallback claims are tagged with low confidence (0.4) by harvest
     if claim.get("confidence", 0.7) <= 0.4 and "." in src:
         return KEYWORD_AUTHORITY

@@ -66,19 +66,23 @@ def chunk_text(text: str, size: int = CHUNK_CHARS, overlap: int = CHUNK_OVERLAP)
 
 
 def add_document(brain: dict, title: str, text: str, source: str = "unknown",
-                 category: str = "Document") -> str:
+                 category: str = "Document", sensitivity: str = None) -> str:
     """Store a long document (chunked). Returns its doc_id. Idempotent by
     content hash — re-adding the same doc updates it in place."""
     ensure_documents(brain)
     text = (text or "").strip()
     if not text:
         return ""
+    if not sensitivity:
+        s = (source or "").lower()
+        sensitivity = "public" if s.startswith(("http://", "https://")) else "internal"
     did = _doc_id(title, text)
     brain["documents"][did] = {
         "doc_id": did,
         "title": title or "(untitled)",
         "source": source,
         "category": category,
+        "sensitivity": sensitivity,
         "added_at": datetime.now().isoformat(),
         "char_len": len(text),
         "chunks": chunk_text(text),

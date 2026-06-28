@@ -5,6 +5,29 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.2.0] — Unreleased
 
+### Local knowledge ingestion + authority + sensitivity (from real-use gap)
+Using Motherflame for real surfaced that a web-research brain is thin and ~a year
+behind the deep, current, confidential knowledge on your machine. Closed that:
+- **`absorb <path>`** (`localsync.py`) — ingest local memory files / vault notes /
+  project docs into the brain. Reads files only (never network). Stores each as a
+  document snapshot; with an AI key, extracts concrete facts into the **review
+  queue** (Motherflame extracts, not the caller). Verified live on real
+  `.claude/.../memory` files.
+- **Source authority tiers** (`trust.py`) — `confidential` (0.97) > `interview`
+  (0.95) > `local_memory` (0.92) > `chat` (0.9) > document (0.6) > **public web
+  (0.5, capped)**. So public marketing copy **can't override** confidential/local
+  truth in conflict resolution, even when it's newer. Verified: confidential
+  "Listing pivot" beats newer public-web "subscription".
+- **Sensitivity classification** — every claim/document carries
+  `public | internal | confidential`, inferred from source/path (memory & private
+  paths → confidential) or set explicitly. Canonical fact inherits the most
+  restrictive level among its claims.
+- **Sync guard** — `push` detects confidential items and requires explicit
+  confirmation before sharing them with the team (still encrypted, but Flame-Key
+  holders can decrypt).
+- **Freshness** — canonical items now carry `last_verified_at` for staleness
+  surfacing.
+
 ### Semantic retrieval (P1 — pluggable, opt-in)
 - **`embeddings.py`** — text→vector providers. `HashingEmbedding` (pure stdlib,
   offline, zero-dep, the safe default) and `OpenAIEmbedding` (user's own key,
