@@ -167,7 +167,7 @@ $ motherflame push
 # Pull latest from teammates
 $ motherflame pull
 ✓ Downloaded latest brain
-✓ Merged 5 new facts from Bombay (CTO)
+✓ Merged 5 new facts from Bob (Product)
 ✓ All machines now aligned
 ```
 
@@ -343,7 +343,7 @@ $ motherflame restore ~/.motherflame/backups/latest.json
 **Solution:** System detects and breaks automatically
 ```bash
 $ motherflame doctor
-⚠️  Coreference loop detected: Alice ↔ opelpleple
+⚠️  Coreference loop detected: Alice ↔ alice
 ✓ Auto-broken: Alice is canonical
 ```
 

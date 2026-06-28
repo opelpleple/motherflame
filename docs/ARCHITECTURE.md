@@ -291,7 +291,7 @@ motherflame pull
 $ motherflame status
 **Org Brain: MyOrg · 12 items (4 from teammates)**
 Brain hash: 7f0b9f438bbb6a1b (all machines aligned ✓)
-Teammates: Aphola (CEO), UT (Legal)
+Teammates: Alice (CEO), Bob (Product), Carol (Engineering)
 Contradictions: 2 (stage, team_size) → auto-resolved
 ```
 
