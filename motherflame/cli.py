@@ -3,7 +3,7 @@
 
 import sys
 from motherflame.core import (
-    cmd_connect, cmd_create, cmd_join, cmd_status, cmd_doctor, cmd_start, cmd_brain,
+    cmd_connect, cmd_create, cmd_join, cmd_status, cmd_doctor, cmd_team, cmd_start, cmd_brain,
     cmd_help, cmd_setup, cmd_query, cmd_chat, cmd_push, cmd_pull, cmd_config,
     print_banner, load_config, load_brain, print_status_box,
 )
@@ -62,6 +62,9 @@ def main():
 
     elif cmd == "doctor":
         cmd_doctor()
+
+    elif cmd == "team":
+        cmd_team()
 
     elif cmd == "start":
         cmd_start()

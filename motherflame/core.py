@@ -742,14 +742,25 @@ def cmd_create(org_name=None, remote=None):
     save_brain(brain)
 
     print(f"\n{GREEN}✓ Created Org Brain: {BOLD}{org_name}{RESET}")
-    print(f"  {DIM}Your Flame Key (share with teammates to join):{RESET}")
-    print(f"  {BOLD}{FLAME_ORANGE}{flame_key}{RESET}")
     if remote:
-        print(f"  {DIM}Sync remote: {remote}{RESET}")
+        from motherflame import sync
+        spinner("Checking remote...", 0.4)
+        health = sync.check_remote(remote)
+        if health["ok"]:
+            print(f"  {GREEN}✓ Remote reachable{RESET} {DIM}({remote}){RESET}")
+        else:
+            print(f"  {RED}✗ Remote not reachable: {health['status']}{RESET} {DIM}— {health['detail']}{RESET}")
+            print(f"  {DIM}Fix access before teammates can join.{RESET}")
+        print(f"\n  {FLAME_ORANGE}📨 Invite your team — share these:{RESET}")
+        print(f"     {BOLD}Key:{RESET}   {FLAME_YELLOW}{flame_key}{RESET}")
+        print(f"     {BOLD}Setup:{RESET} {CYAN}motherflame join {flame_key} --remote {remote}{RESET}")
+        print(f"\n  {DIM}Then: {CYAN}motherflame setup{RESET}{DIM} → {CYAN}motherflame start{RESET}{DIM} → {CYAN}motherflame push{RESET}\n")
     else:
+        print(f"  {DIM}Your Flame Key (share with teammates to join):{RESET}")
+        print(f"  {BOLD}{FLAME_ORANGE}{flame_key}{RESET}")
         print(f"  {DIM}Solo for now. To sync a team, set a git remote:{RESET}")
         print(f"    {CYAN}motherflame config set sync_remote <git-url>{RESET}")
-    print(f"\n  {DIM}Next: {CYAN}motherflame setup{RESET}{DIM} → {CYAN}motherflame start{RESET}\n")
+        print(f"\n  {DIM}Next: {CYAN}motherflame setup{RESET}{DIM} → {CYAN}motherflame start{RESET}\n")
 
 
 def cmd_join(flame_key, remote=None):
@@ -825,6 +836,17 @@ def cmd_doctor():
     has_facts  = n_items > 0
     n_pending  = len(brain.get("pending", []))
     has_remote = bool(cfg.get("sync_remote"))
+    # Deep team check: a remote string isn't enough — is it actually reachable?
+    remote_health = None
+    if has_remote:
+        try:
+            from motherflame import sync
+            remote_health = sync.check_remote(cfg["sync_remote"], timeout=8)
+        except Exception:
+            remote_health = {"ok": False, "status": "invalid", "detail": "check failed"}
+    # Team sync is "ok" when either solo (valid) or the remote is reachable.
+    # It's only a problem when a remote is SET but unreachable (auth/url broken).
+    team_ok = (not has_remote) or bool(remote_health and remote_health["ok"])
     try:
         from motherflame import sync
         sync._aesgcm(); crypto_ok = True
@@ -846,9 +868,11 @@ def cmd_doctor():
         ("Knowledge",     has_facts,
          f"{n_items} facts" if has_facts else "empty brain",
          "motherflame start"),
-        ("Team sync",     has_remote,
-         cfg.get("sync_remote", "") if has_remote else "solo (no remote)",
-         "motherflame config set sync_remote <git-url>"),
+        ("Team sync",     team_ok,
+         ("solo (no remote)" if not has_remote
+          else f"{cfg.get('sync_remote','')} · {remote_health['status']}"),
+         ("check SSH key / repo access" if (has_remote and remote_health and not remote_health["ok"])
+          else "motherflame config set sync_remote <git-url>")),
     ]
     lit = sum(1 for _, ok, _, _ in checks if ok)
     total = len(checks)
@@ -897,11 +921,91 @@ def cmd_doctor():
     print()
     if lit == total:
         print(f"  {FLAME_ORANGE}{BOLD}🔥🔥🔥 Fully lit — your Org Brain is ready to roll!{RESET}")
-    elif lit >= 2:
+    elif lit >= 4:
         nxt = next(h for _, ok, _, h in checks if not ok)
         print(f"  {FLAME_YELLOW}Almost there ({lit}/{total}).{RESET} Next: {CYAN}{nxt}{RESET}")
+    elif lit >= 3:
+        nxt = next(h for _, ok, _, h in checks if not ok)
+        print(f"  {FLAME_YELLOW}Getting warm ({lit}/{total}).{RESET} Next: {CYAN}{nxt}{RESET}")
     else:
-        print(f"  {GREY}Cold start ({lit}/{total}).{RESET} Begin: {CYAN}motherflame setup{RESET}")
+        nxt = next(h for _, ok, _, h in checks if not ok)
+        print(f"  {GREY}Cold start ({lit}/{total}).{RESET} Begin: {CYAN}{nxt}{RESET}")
+    print()
+
+
+def _humanize_ago(iso_ts):
+    """'2 hours ago' from an ISO timestamp, or 'never'."""
+    if not iso_ts:
+        return "never"
+    try:
+        from datetime import datetime
+        delta = datetime.now() - datetime.fromisoformat(iso_ts)
+        s = int(delta.total_seconds())
+        if s < 60:   return "just now"
+        if s < 3600: return f"{s//60} min ago"
+        if s < 86400: return f"{s//3600} hour(s) ago"
+        return f"{s//86400} day(s) ago"
+    except (ValueError, TypeError):
+        return "unknown"
+
+
+def cmd_team():
+    """motherflame team — team dashboard: key, remote health, members, sync, invite."""
+    cfg = load_config()
+    brain = load_brain()
+    org = cfg.get("org_name", "Org")
+    flame_key = cfg.get("flame_key") or cfg.get("api_key")
+    remote = cfg.get("sync_remote")
+
+    print(f"\n  {FLAME_ORANGE}{BOLD}🔥 {org} — Team Brain{RESET}\n")
+
+    if not flame_key:
+        print(f"  {GREY}No Org Brain yet.{RESET}")
+        print(f"  Start one: {CYAN}motherflame create \"<name>\"{RESET}")
+        print(f"  Or join:   {CYAN}motherflame join <key> --remote <git-url>{RESET}\n")
+        return
+
+    # Flame Key (secret)
+    print(f"  {BOLD}Flame Key{RESET}   {FLAME_YELLOW}{flame_key}{RESET}  {DIM}🔒 keep secret{RESET}")
+
+    # Remote + live health
+    if remote:
+        from motherflame import sync
+        spinner("Checking remote...", 0.4)
+        health = sync.check_remote(remote)
+        if health["ok"]:
+            badge = f"{GREEN}✓ {health['status']}{RESET}"
+        else:
+            badge = f"{RED}✗ {health['status']}{RESET}"
+        print(f"  {BOLD}Sync remote{RESET} {remote}  {badge}")
+        if not health["ok"]:
+            print(f"    {DIM}↳ {health['detail']}{RESET}")
+            if health["status"] == "auth_failed":
+                print(f"    {DIM}  fix: check your SSH key / repo access{RESET}")
+            elif health["status"] == "not_found":
+                print(f"    {DIM}  fix: verify the URL, or create the repo first{RESET}")
+    else:
+        print(f"  {BOLD}Sync remote{RESET} {EMBER}none — solo mode{RESET}")
+        print(f"    {DIM}↳ add one for team sync: {CYAN}motherflame config set sync_remote <git-url>{RESET}")
+
+    # Members (honest: local view, not a real roster)
+    members = cfg.get("members", 1)
+    me = cfg.get("member_name", "you")
+    print(f"  {BOLD}Members{RESET}     {members} flame{'s' if members != 1 else ''} {DIM}(you: {me}){RESET}")
+
+    # Last sync
+    print(f"  {BOLD}Last push{RESET}   {_humanize_ago(cfg.get('last_push'))}")
+    print(f"  {BOLD}Last pull{RESET}   {_humanize_ago(cfg.get('last_pull'))}")
+
+    # Invite block (only meaningful with a remote)
+    print(f"\n  {FLAME_ORANGE}── Invite a teammate ──{RESET}")
+    if remote:
+        print(f"  {DIM}Share these two things:{RESET}")
+        print(f"    {BOLD}1.{RESET} Flame Key: {FLAME_YELLOW}{flame_key}{RESET}")
+        print(f"    {BOLD}2.{RESET} They run:  {CYAN}motherflame join {flame_key} --remote {remote}{RESET}")
+    else:
+        print(f"  {DIM}Set a sync remote first, then teammates can join:{RESET}")
+        print(f"    {CYAN}motherflame config set sync_remote <git-url>{RESET}")
     print()
 
 
@@ -944,6 +1048,7 @@ def cmd_help():
 
 {BOLD}Commands:{RESET}
   {CYAN}motherflame doctor{RESET}           Onboarding checklist — what's ready, what's missing
+  {CYAN}motherflame team{RESET}             Team dashboard — key, remote health, members, invite
   {CYAN}motherflame status{RESET}           Show connection & brain status
   {CYAN}motherflame start{RESET}            Harvest org context (AI extraction + interview)
   {CYAN}motherflame brain{RESET}            View what's in your Org Brain
@@ -1684,6 +1789,20 @@ def cmd_push():
 
     spinner("Encrypting & pushing...", 0.6)
     git_remote = cfg.get("sync_remote")   # set to a git URL for real team sync
+    # Team safety: pull teammates' changes first so we don't push over them.
+    if git_remote:
+        try:
+            remote_brain = sync.pull(flame_key, org_id, git_remote=git_remote)
+            if remote_brain:
+                merged, added = sync.merge_brains(brain, remote_brain)
+                if added:
+                    from motherflame import conflicts
+                    conflicts.rebuild_canonical(merged)
+                    save_brain(merged)
+                    brain = merged
+                    print(f"  {DIM}⟳ Pulled {added} new fact(s) from teammates first{RESET}")
+        except Exception:
+            pass   # pull-first is best-effort; the push retry loop still guards races
     try:
         receipt = sync.push(brain, flame_key, org_id, git_remote=git_remote)
         if not receipt.get("ok"):
@@ -1695,6 +1814,8 @@ def cmd_push():
         print(f"  {DIM}Encrypted client-side — the server never sees your data{RESET}")
         if receipt.get("backend") != "git":
             print(f"  {DIM}Tip: set sync_remote to a git URL for real team sync{RESET}")
+        cfg["last_push"] = datetime.now().isoformat()
+        save_config(cfg)
         print()
     except Exception as e:
         print(f"{RED}✗ Push failed: {e}{RESET}\n")
@@ -1731,6 +1852,8 @@ def cmd_pull():
     merged, n_new = sync.merge_brains(brain, remote)
     merged["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
     save_brain(merged)
+    cfg["last_pull"] = datetime.now().isoformat()
+    save_config(cfg)
     print(f"{GREEN}✓ Pulled & merged{RESET}")
     print(f"  {DIM}{n_new} new facts from teammates · {len(merged['items'])} total{RESET}\n")
 

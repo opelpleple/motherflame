@@ -16,17 +16,16 @@ def test_doctor_cold_start(tmp_path, monkeypatch, capsys):
     core.cmd_doctor()
     out = capsys.readouterr().out
     assert "Motherflame Doctor" in out
-    assert "Cold start" in out
-    assert "motherflame setup" in out          # hint shown
-    assert "20%" in out                          # only encryption lit (1/5)
+    assert "motherflame setup" in out          # hint shown for AI agent
+    assert "Cold start" in out                  # 2/5 (encryption + solo team sync)
 
 
 def test_doctor_fully_lit(tmp_path, monkeypatch, capsys):
     _isolate(tmp_path, monkeypatch)
-    # configure everything
+    # configure everything; stay SOLO (no remote) so team-sync is valid without network
     cfg = core.load_config()
     cfg.update(provider="openai", model="gpt-4o-mini", agent_api_key="sk-x",
-               flame_key="mf_acme_1", org_name="Acme", sync_remote="/tmp/r.git")
+               flame_key="mf_acme_1", org_name="Acme")
     core.save_config(cfg)
     from motherflame import conflicts
     brain = core.load_brain()

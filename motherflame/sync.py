@@ -130,6 +130,41 @@ def _git(args, cwd, check=True):
                           text=True, check=check)
 
 
+def check_remote(remote: str, timeout: int = 10) -> dict:
+    """Probe a git sync remote without cloning. Returns
+    {ok, status, detail} where status is one of:
+      reachable | empty | auth_failed | not_found | no_network | invalid
+    Used by `team`/`doctor`/pre-push so remote problems surface clearly
+    instead of failing silently mid-sync."""
+    import subprocess
+    if not remote:
+        return {"ok": False, "status": "invalid", "detail": "no remote set"}
+    try:
+        p = subprocess.run(
+            ["git", "ls-remote", remote],
+            capture_output=True, text=True, timeout=timeout,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0",   # never block on a credential prompt
+                 "GIT_SSH_COMMAND": "ssh -oBatchMode=yes -oConnectTimeout=8"},
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "status": "no_network", "detail": "timed out reaching remote"}
+    except FileNotFoundError:
+        return {"ok": False, "status": "invalid", "detail": "git not installed"}
+    if p.returncode == 0:
+        if p.stdout.strip():
+            return {"ok": True, "status": "reachable", "detail": "ok"}
+        return {"ok": True, "status": "empty", "detail": "reachable but no commits yet"}
+    err = (p.stderr or "").lower()
+    if any(s in err for s in ("permission denied", "authentication failed",
+                              "could not read", "access denied", "publickey")):
+        return {"ok": False, "status": "auth_failed", "detail": p.stderr.strip().splitlines()[-1] if p.stderr.strip() else "auth failed"}
+    if any(s in err for s in ("not found", "does not exist", "repository not found")):
+        return {"ok": False, "status": "not_found", "detail": "repository not found"}
+    if any(s in err for s in ("could not resolve", "network", "timed out", "unable to access")):
+        return {"ok": False, "status": "no_network", "detail": "network error"}
+    return {"ok": False, "status": "invalid", "detail": (p.stderr or "unknown error").strip().splitlines()[-1] if p.stderr.strip() else "unknown error"}
+
+
 def _git_sync_dir(remote: str) -> Path:
     """Clone (or reuse) a local working copy of the sync remote under ~/.motherflame/sync/."""
     import hashlib
