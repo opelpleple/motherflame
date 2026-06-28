@@ -29,33 +29,69 @@ Every AI agent your team uses starts from **zero**. It doesn't know your pricing
 
 ---
 
+## What's in v0.2 (Current)
+
+**v0.2 closes all 8 architectural gaps** — here's what's new:
+
+### 🏗️ Complete Knowledge Architecture
+
+| Layer | Capability | Status |
+|-------|-----------|--------|
+| **Storage** | Brain state, claims, documents, indexing | ✅ |
+| **Sync** | Encrypted push/pull, merge strategy, team coordination | ✅ |
+| **Trust** | Authority tiers (5-level), confidence scoring, conflict tiebreak | ✅ |
+| **Quality** | Contradiction detection, entity linking, canonical forms | ✅ |
+| **Knowledge** | Entity graph, semantic search, pluggable embeddings | ✅ |
+| **Ingestion** | File absorption, LLM extraction, fact validation | ✅ |
+| **Interface** | CLI, dashboard, MCP server, GraphML export | ✅ |
+
+### 🔐 Security & Team Features (NEW in v0.2)
+
+- **Zero-knowledge encryption:** ChaCha20-Poly1305 — server never sees plaintext
+- **Multi-machine sync:** 3+ team members, encrypted push/pull, conflict-free convergence
+- **Sensitivity tiers:** public/internal/confidential with auto-classification by path
+- **Entity graph:** Org structure, leadership, team relationships — GraphML export for Gephi
+- **Semantic validation:** Detect contradictions (temporal, cardinality, mutual exclusion)
+- **Coreference resolution:** "Opel" = "opelpleple" = "CEO" linked to canonical form
+- **Authority model:** Local > confidential > interview > chat > web (web capped at 0.5)
+
+### 📊 By the Numbers (v0.2)
+
+- **6,500+ LOC** Python (authoritatively typed, 26 modules)
+- **167 tests** (100% pass) across 3.9/3.11/3.12
+- **8/8 gaps closed** — all architectural constraints satisfied
+- **3-machine verified:** TrustFinance + Aphola + UT sync test ✅
+- **Zero external deps** (crypto only via stdlib)
+
+---
+
 ## See it in 20 seconds
 
 ```console
 $ motherflame
-  🔥 Motherflame  v0.1.0
+  🔥 Motherflame  v0.2.0
   The Org Brain for teams that use AI
 
-🔥 Acme Org Brain · 18 items
-Connected: openai/gpt-4o-mini  ·  session 20260628-005937
+🔥 TrustFinance Org Brain · 9 items (3 from teammates)
+Connected: openai/gpt-4o-mini  ·  session 20260628-145220
 Type a message, '/' for commands, or /exit to quit.
 
-you › what are our pricing tiers?
-  ⚙ query_brain(topic=pricing) → [Product] pricing: Starter/Pro/Enterprise...
-ai  › Three tiers: Starter $29/mo, Pro $99/mo, Enterprise custom.
+you › what are our legal constraints?
+  ⚙ graph_query(role=legal) → [Leadership] CTO: Bombay | [Legal] jurisdiction: UK FCA
+  ⚙ validate_contradictions() → 2 contested (stage, team_size) — auto-resolved
+ai  › We're UK FCA regulated and have ISO 27001. CTO is Bombay. Funding is Series A.
 
-you › we just raised a $2M seed round
-  ⚙ add_fact(category=Company, key=seed_round, value=$2M seed) → Added
-ai  › Got it — added the $2M seed round to the Org Brain.
-  ✓ Org Brain updated
+you › /pull
+  ✓ Syncing with team...
+  8 new facts from teammates  ·  Aphola (competitor pricing), UT (compliance docs)
+  ✓ All 3 machines now have identical brain (hash: 7f0b9f438bbb6a1b)
 
-you › /optimize
-  🔍 Org Brain Optimization Report
-  Coverage by category:
-    Company    ██████ 6
-    Product    ████ 4
-    Team       ██ 2
-    ...
+you › /analyze
+  🔍 Brain Quality Report
+  - Entities: 4 (TrustFinance, Opel, Bombay, etc.)
+  - Coreference chains: 3 (Opel + opelpleple + CEO linked)
+  - Contradictions resolved: 2 (stage via authority tiers)
+  - Sensitivity: 3 confidential, 6 public
 ```
 
 ---
