@@ -345,7 +345,7 @@ def llm_research_extract(cfg: dict, text: str, source_url: str) -> list:
             cleaned.append({
                 "category":     str(item.get("category", "Company")),
                 "key":          str(item.get("key", "unknown")),
-                "value":        str(item.get("value", ""))[:300],
+                "value":        str(item.get("value", ""))[:1000],
                 "confidence":   float(item.get("confidence", 0.75)),
                 "source":       source_url,
                 "harvested_at": datetime.now().isoformat(),
@@ -376,7 +376,7 @@ def llm_extract_signals(cfg: dict, text: str, source: str) -> list[dict]:
             cleaned.append({
                 "category":     str(item.get("category","General")),
                 "key":          str(item.get("key","unknown")),
-                "value":        str(item.get("value",""))[:300],
+                "value":        str(item.get("value",""))[:1000],
                 "confidence":   float(item.get("confidence", 0.85)),
                 "source":       source,
                 "harvested_at": datetime.now().isoformat(),

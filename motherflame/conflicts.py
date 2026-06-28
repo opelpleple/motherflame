@@ -51,6 +51,7 @@ def ensure_layers(brain: dict) -> dict:
     brain.setdefault("resolutions", {})    # key -> manual resolution
     brain.setdefault("owners", {})         # scope (category or key) -> owner
     brain.setdefault("pending", [])        # review queue: claims awaiting approval
+    brain.setdefault("documents", {})      # long-form docs (snapshots), chunked
     return brain
 
 
@@ -189,6 +190,42 @@ for _canon, _aliases in KEY_ALIASES.items():
         _ALIAS_INDEX[_a] = _canon
 
 
+# ── Category canonicalization (prevents Eng/Engineering/Dev drift) ──────────
+# Categories are open-ended (orgs add their own: Legal, Finance, Sales…), but we
+# still collapse common synonyms so the same area doesn't fragment into 3.
+CATEGORY_ALIASES = {
+    "Company":     {"company", "org", "organization", "organisation", "about", "overview", "general"},
+    "Product":     {"product", "products", "service", "services", "offering", "offerings", "solution", "solutions"},
+    "Team":        {"team", "people", "staff", "hr", "human_resources", "org_chart", "headcount"},
+    "Voice":       {"voice", "tone", "brand", "branding", "communication", "messaging", "style"},
+    "Strategy":    {"strategy", "strategic", "goals", "okrs", "okr", "roadmap", "vision", "priorities"},
+    "Finance":     {"finance", "financial", "budget", "revenue", "accounting"},
+    "Engineering": {"engineering", "eng", "dev", "development", "tech", "technology", "infra", "infrastructure"},
+    "Sales":       {"sales", "gtm", "go_to_market", "revenue_ops", "pipeline"},
+    "Marketing":   {"marketing", "growth", "demand_gen", "seo"},
+    "Legal":       {"legal", "compliance", "regulatory", "regulation", "policy", "licensing"},
+    "Customer":    {"customer", "customers", "support", "success", "cs", "clients"},
+    "Document":    {"document", "documents", "doc", "docs", "memo", "plan", "plans"},
+}
+_CAT_INDEX = {}
+for _ccanon, _csyns in CATEGORY_ALIASES.items():
+    _CAT_INDEX[_ccanon.lower()] = _ccanon
+    for _cs in _csyns:
+        _CAT_INDEX[_cs] = _ccanon
+
+
+def canonical_category(category: str) -> str:
+    """Collapse category synonyms (Eng/Engineering/Dev → Engineering) while still
+    allowing brand-new categories. Unknown categories are kept, Title-Cased."""
+    if not category:
+        return "Company"
+    c = str(category).strip().lower().replace("-", "_").replace(" ", "_")
+    c = "_".join(p for p in c.split("_") if p)
+    if c in _CAT_INDEX:
+        return _CAT_INDEX[c]
+    return " ".join(w.capitalize() for w in c.split("_")) or "Company"
+
+
 def canonical_key(key: str) -> str:
     """Map a free-form/LLM key to its canonical form.
     1) snake-case normalize  2) alias lookup  3) singularize trailing 's'."""
@@ -217,6 +254,7 @@ def add_claim(brain: dict, category: str, key: str, value: str,
     or verified flags."""
     ensure_layers(brain)
     key = canonical_key(key)
+    category = canonical_category(category)
     ts = ts or datetime.now().isoformat()
     claim = {
         "category": category, "key": key, "value": value,

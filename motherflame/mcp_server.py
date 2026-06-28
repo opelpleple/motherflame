@@ -124,6 +124,26 @@ def _tool_defs():
                 "required": [],
             },
         },
+        {
+            "name": "list_documents",
+            "description": (
+                "List the long-form documents stored in the Org Brain (plans, memos, "
+                "runbooks) with their ids and titles. Use before get_document."
+            ),
+            "inputSchema": {"type": "object", "properties": {}, "required": []},
+        },
+        {
+            "name": "get_document",
+            "description": (
+                "Read the full text of a stored document by its doc_id. Use when the "
+                "user asks about a plan/memo/runbook that's too long to be a single fact."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {"doc_id": {"type": "string"}},
+                "required": ["doc_id"],
+            },
+        },
     ]
 
 
@@ -185,6 +205,18 @@ def _run_tool(name, args):
                     "(unset MOTHERFLAME_MCP_READONLY to allow).")
         from motherflame.runtime import _tool_create_team_repo
         return _tool_create_team_repo(load_brain(), args.get("name"), args.get("private", True))
+    elif name == "list_documents":
+        from motherflame import documents
+        docs = documents.list_documents(load_brain())
+        if not docs:
+            return "No documents stored."
+        return "\n".join(f"{d['doc_id']} · {d['title']} ({d['char_len']} chars)" for d in docs)
+    elif name == "get_document":
+        from motherflame import documents
+        doc = documents.get_document(load_brain(), args.get("doc_id", ""))
+        if not doc:
+            return f"No document with id '{args.get('doc_id','')}'."
+        return f"# {doc['title']}\n(source: {doc['source']})\n\n" + "\n\n".join(doc["chunks"])
     else:
         raise ValueError(f"Unknown tool: {name}")
 

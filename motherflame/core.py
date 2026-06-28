@@ -1057,11 +1057,15 @@ def cmd_research(url=None):
         print(f"  {DIM}· {u}{RESET}")
     print()
 
-    # Extract from every page, collect candidate facts
+    # Extract from every page, collect candidate facts. Also keep each page as a
+    # document snapshot so the original long-form text is preserved, not just the
+    # short facts squeezed out of it.
+    from motherflame import documents
     candidates = []
     for i, (u, text) in enumerate(pages.items(), 1):
         print(f"\r{FLAME_ORANGE}⠿{RESET} Extracting facts ({i}/{len(pages)})...", end="", flush=True)
         candidates.extend(agent.llm_research_extract(cfg, text, u))
+        documents.add_document(brain, title=u, text=text, source=u, category="Document")
     print(f"\r{CLEAR_LINE}", end="")
 
     if not candidates:
@@ -1102,6 +1106,53 @@ def cmd_research(url=None):
     save_brain(brain)
     print(f"{GREEN}{BOLD}✓ Added {kept} confirmed fact(s) to your Org Brain.{RESET}")
     print(f"  {DIM}See them: {CYAN}motherflame brain{RESET}{DIM}  ·  Fill gaps: {CYAN}motherflame chat{RESET}\n")
+
+
+def cmd_docs(action=None, arg=None):
+    """motherflame docs [list|show <id>|add <file>] — manage long-form documents.
+
+    Facts are short truths; documents are full-text reference (plans, memos,
+    runbooks) stored as snapshots and chunked for retrieval."""
+    from motherflame import documents
+    brain = load_brain()
+
+    if action == "add" and arg:
+        from pathlib import Path
+        p = Path(arg).expanduser()
+        if not p.exists():
+            print(f"{RED}✗ File not found: {arg}{RESET}")
+            return
+        text = read_file_text(p) if 'read_file_text' in globals() else p.read_text(errors="ignore")
+        did = documents.add_document(brain, title=p.name, text=text, source=str(p),
+                                     category="Document")
+        save_brain(brain)
+        doc = documents.get_document(brain, did)
+        print(f"{GREEN}✓ Added document '{p.name}'{RESET} "
+              f"{DIM}({doc['char_len']} chars, {len(doc['chunks'])} chunks){RESET}")
+        print(f"  {DIM}Ask about it in {CYAN}motherflame chat{RESET}\n")
+        return
+
+    if action == "show" and arg:
+        doc = documents.get_document(brain, arg)
+        if not doc:
+            print(f"{RED}✗ No document '{arg}'{RESET}")
+            return
+        print(f"\n{FLAME_ORANGE}🔥 {doc['title']}{RESET} {DIM}· {doc['char_len']} chars · {doc['source']}{RESET}\n")
+        print("\n\n".join(doc["chunks"]))
+        print()
+        return
+
+    # default: list
+    docs = documents.list_documents(brain)
+    if not docs:
+        print(f"\n{DIM}No documents yet. Add one: {CYAN}motherflame docs add <file>{RESET}{DIM}, "
+              f"or run {CYAN}motherflame research <url>{RESET}{DIM}.{RESET}\n")
+        return
+    print(f"\n{FLAME_ORANGE}🔥 Documents{RESET} {DIM}({len(docs)}){RESET}\n")
+    for d in docs:
+        print(f"  {BOLD}{d['title']}{RESET}  {DIM}{d['char_len']} chars · {d['category']}{RESET}")
+        print(f"    {DIM}{d['doc_id']} · {d['source']}{RESET}")
+    print(f"\n  {DIM}View: {CYAN}motherflame docs show <id>{RESET}\n")
 
 
 def cmd_brain():
@@ -1147,6 +1198,7 @@ def cmd_help():
   {CYAN}motherflame status{RESET}           Show connection & brain status
   {CYAN}motherflame start{RESET}            Harvest org context (web research + files + interview)
   {CYAN}motherflame research <url>{RESET}   Research a company website → confirm facts → brain
+  {CYAN}motherflame docs{RESET}             Long-form documents: list / show <id> / add <file>
   {CYAN}motherflame brain{RESET}            View what's in your Org Brain
   {CYAN}motherflame chat{RESET}             Talk to your Org Brain agent (tool-use, persistent)
   {CYAN}motherflame query <question>{RESET} Ask your Org Brain a one-off question

@@ -42,6 +42,22 @@ can fork and self-host.
 - `/conflicts`, `/resolve` (incl. bulk auto-resolve), `/owner` commands
 - Contested facts flagged in every query answer (no false confidence)
 
+### Scaling to large orgs (documents, categories, retrieval)
+- **Document store** (`documents.py`) — long-form knowledge (plans, memos,
+  runbooks) stored as chunked snapshots in `brain["documents"]`, not crammed into
+  a 300-char fact. Rule: a document is a *snapshot*, a fact is the *truth* — docs
+  never override facts, they're citable reference. `docs list/show/add` command +
+  `list_documents`/`get_document` MCP tools. Fact value cap raised 300 → 1000.
+- **Dynamic categories** — categories are now open-ended (Legal, Finance, Eng,
+  Sales, …) with a `canonical_category` alias map so Eng/Engineering/Dev collapse
+  to one instead of fragmenting (the same drift guard facts already had).
+- **Retrieval interface** (`retrieval.py`) — pluggable `BaseRetriever` ranking
+  over facts AND document chunks. Default `KeywordRetriever` is pure stdlib;
+  a semantic/vector retriever can register and take over without touching callers
+  (the honest path to scale). `query_brain` now surfaces relevant doc passages.
+- Web research keeps each fetched page as a document snapshot, not just the
+  short facts squeezed out of it.
+
 ### Onboarding & team UX
 - **`create` / `join`** — explicit "start a new org" vs "join an existing one".
   `join` actually pulls + merges the team's brain (not just stores the key).

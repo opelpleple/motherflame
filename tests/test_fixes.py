@@ -100,7 +100,7 @@ def test_mcp_tool_defs_shape():
     defs = mcp_server._tool_defs()
     names = {d["name"] for d in defs}
     assert names == {"query_brain", "list_facts", "add_fact", "forget_fact", "verify_fact",
-                     "setup_team_sync", "create_team_repo"}
+                     "setup_team_sync", "create_team_repo", "list_documents", "get_document"}
     for d in defs:
         assert "description" in d and "inputSchema" in d
 

@@ -4,7 +4,7 @@
 import sys
 from motherflame.core import (
     cmd_connect, cmd_create, cmd_join, cmd_status, cmd_doctor, cmd_team, cmd_start, cmd_brain,
-    cmd_help, cmd_setup, cmd_query, cmd_chat, cmd_push, cmd_pull, cmd_config, cmd_research,
+    cmd_help, cmd_setup, cmd_query, cmd_chat, cmd_push, cmd_pull, cmd_config, cmd_research, cmd_docs,
     print_banner, print_splash, load_config, load_brain, print_status_box,
 )
 
@@ -70,6 +70,10 @@ def main():
 
     elif cmd == "research":
         cmd_research(args[1] if len(args) >= 2 else None)
+
+    elif cmd == "docs":
+        cmd_docs(args[1] if len(args) >= 2 else None,
+                 args[2] if len(args) >= 3 else None)
 
     elif cmd == "brain":
         cmd_brain()

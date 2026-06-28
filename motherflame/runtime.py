@@ -127,7 +127,22 @@ def _tool_query_brain(brain, topic):
         enriched.append(it)
 
     fit = tokens.fit_facts(enriched, query=topic, budget_tokens=tokens.DEFAULT_BUDGET)
-    return fit["context"] or "Org Brain is empty."
+    out = fit["context"] or ""
+
+    # Also surface the most relevant passage from any long documents (plans,
+    # memos) so answers aren't limited to short facts.
+    try:
+        from motherflame import retrieval
+        chunks = [r for r in retrieval.search(brain, topic, k=2) if r["type"] == "chunk"]
+        if chunks:
+            out += "\n\nRelevant document passages:"
+            for c in chunks:
+                snippet = c["text"][:500].strip()
+                out += f"\n• [{c['title']}] {snippet}"
+    except Exception:
+        pass
+
+    return out or "Org Brain is empty."
 
 
 def _tool_add_fact(brain, category, key, value):
