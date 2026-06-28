@@ -52,7 +52,7 @@ Every AI agent your team uses starts from **zero**. It doesn't know your pricing
 - **Sensitivity tiers:** public/internal/confidential with auto-classification by path
 - **Entity graph:** Org structure, leadership, team relationships — GraphML export for Gephi
 - **Semantic validation:** Detect contradictions (temporal, cardinality, mutual exclusion)
-- **Coreference resolution:** "Opel" = "opelpleple" = "CEO" linked to canonical form
+- **Coreference resolution:** "Alice" = "alice" = "CEO" linked to canonical form
 - **Authority model:** Local > confidential > interview > chat > web (web capped at 0.5)
 
 ### 📊 By the Numbers (v0.2)
@@ -60,7 +60,7 @@ Every AI agent your team uses starts from **zero**. It doesn't know your pricing
 - **6,500+ LOC** Python (authoritatively typed, 26 modules)
 - **167 tests** (100% pass) across 3.9/3.11/3.12
 - **8/8 gaps closed** — all architectural constraints satisfied
-- **3-machine verified:** TrustFinance + Aphola + UT sync test ✅
+- **3-machine verified:** Generic org sync test with multiple team members ✅
 - **Zero external deps** (crypto only via stdlib)
 
 ---

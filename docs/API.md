@@ -117,7 +117,7 @@ graph = EntityGraph()
 Add a node to the graph.
 
 ```python
-org = Entity(id="org:trustfinance", type="org", name="TrustFinance")
+org = Entity(id="org:myorg", type="org", name="MyOrg")
 graph.add_entity(org)
 ```
 
@@ -161,7 +161,7 @@ Extract org hierarchy (CEO, reports, etc.).
 
 ```python
 hierarchy = graph.get_hierarchy()
-# {"ceo": "Opel", "cto": "Bombay", "reports": [...]}
+# {"ceo": "Alice", "cto": "Bob", "reports": [...]}
 ```
 
 **`stats() -> dict`**
@@ -249,10 +249,10 @@ resolver = CoreferenceResolver()
 Check if two mentions refer to the same entity.
 
 ```python
-is_same, confidence = resolver.link_entities("Opel", "opelpleple")
+is_same, confidence = resolver.link_entities("Alice", "alice")
 # (True, 0.95) — very likely same person
 
-is_same, confidence = resolver.link_entities("Opel", "Bob")
+is_same, confidence = resolver.link_entities("Alice", "Bob")
 # (False, 0.1) — unlikely same person
 ```
 
@@ -262,11 +262,11 @@ Register a coreference chain (multiple mentions of same entity).
 
 ```python
 chain = CoreferenceChain(
-    canonical_id="person:opel",
-    canonical_name="Opel",
-    mentions=["Opel", "opelpleple", "opel@trustfinance.com"],
+    canonical_id="person:alice",
+    canonical_name="Alice",
+    mentions=["Alice", "alice", "ALI"],
     confidence=0.95,
-    evidence=["exact", "email_domain", "abbrev"]
+    evidence=["exact", "abbrev"]
 )
 resolver.add_chain(chain)
 ```
@@ -286,8 +286,8 @@ Auto-build chains from brain items.
 
 ```python
 items = [
-    {"key": "ceo", "value": "Opel"},
-    {"key": "founder", "value": "opelpleple"},
+    {"key": "ceo", "value": "Alice"},
+    {"key": "founder", "value": "alice"},
 ]
 resolver.build_from_facts(items)
 # Now 1 chain created linking both mentions
@@ -320,7 +320,7 @@ stats = resolver.stats()
 Create org brain.
 
 ```bash
-motherflame create TrustFinance --remote git@github.com:opelpleple/team-brain.git
+motherflame create MyOrg --remote git@github.com:myteam/org-brain.git
 ```
 
 ### `motherflame join <flame_key> --remote <url>`
@@ -360,10 +360,9 @@ motherflame pull
 Show brain summary.
 
 ```bash
-motherflame status
-# Org Brain: TrustFinance · 9 items (3 from teammates)
-# Brain hash: 7f0b9f438bbb6a1b
-# Contradictions: 2 (stage, team_size) → auto-resolved
+motherflame
+you › what are our key business constraints?
+ai  › You're at Series A stage with $15M ARR. CEO is Alice...
 ```
 
 ### `motherflame doctor`
@@ -400,8 +399,8 @@ ai  › UK FCA regulated...
 
 ```python
 brain = {
-    "org_name": "TrustFinance",
-    "flame_key": "mf_trustfinance_be583d48d4052b2e",
+    "org_name": "MyOrg",
+    "flame_key": "mf_myorg_a7f3b9c2d1e6f4a8",
     "items": [
         {
             "key": "stage",
@@ -439,9 +438,9 @@ Contradiction(
 
 ```python
 CoreferenceChain(
-    canonical_id="person:opel",
-    canonical_name="Opel",
-    mentions=["Opel", "opelpleple", "opel@trustfinance.com"],
+    canonical_id="person:alice",
+    canonical_name="Alice",
+    mentions=["Alice", "alice", "ALI"],
     confidence=0.95,
     evidence=["exact_match", "abbreviation", "email_domain"],
     timestamp="2026-06-28T14:30:00Z"

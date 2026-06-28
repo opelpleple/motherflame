@@ -144,16 +144,16 @@ motherflame absorb ~/Documents/contracts/
 
 ```python
 # From canonical items:
-# name: TrustFinance
-# ceo: Opel
-# cto: Bombay
+# name: MyOrg
+# ceo: Alice
+# cto: Bob
 #
 # Generates:
-# - Entity(org:trustfinance)
-# - Entity(person:opel)
-# - Entity(person:bombay)
-# - Relationship(opel → trustfinance, is_ceo_of)
-# - Relationship(bombay → trustfinance, is_cto_of)
+# - Entity(org:myorg)
+# - Entity(person:alice)
+# - Entity(person:bob)
+# - Relationship(alice → myorg, is_ceo_of)
+# - Relationship(bob → myorg, is_cto_of)
 ```
 
 **Visualization:**
@@ -196,7 +196,7 @@ contradictions = validator.validate_facts(items)
 
 ### Gap F: Entity Coreference — Mention Linking ✅
 
-**Problem:** "Opel", "opelpleple", "CEO" = same person but looks like 3 entities.
+**Problem:** "Alice", "alice", "CEO" = same person but looks like 3 entities.
 
 **Solution:** Link mentions to canonical form via:
 - Exact match (case-insensitive)
@@ -208,11 +208,11 @@ contradictions = validator.validate_facts(items)
 
 ```python
 resolver = CoreferenceResolver()
-is_same, confidence = resolver.link_entities("Opel", "opelpleple")
+is_same, confidence = resolver.link_entities("Alice", "alice")
 # → (True, 0.95) — linked!
 
 resolver.resolve("CEO")
-# → "person:opel" (canonical form)
+# → "person:alice" (canonical form)
 ```
 
 ---
@@ -252,17 +252,17 @@ Resolution hints: Series A wins (0.95 > 0.6)
 ### 1. Create Org (Founder)
 
 ```bash
-$ motherflame create TrustFinance --remote git@github.com:opelpleple/team-brain.git
+$ motherflame create MyOrg --remote git@github.com:myteam/org-brain.git
 ✓ Created org brain
-✓ Flame Key: mf_trustfinance_be583d48d4052b2e
-✓ Invite teammates: motherflame join mf_trustfinance_... --remote <url>
+✓ Flame Key: mf_myorg_a7f3b9c2d1e6f4a8
+✓ Invite teammates: motherflame join mf_myorg_... --remote <url>
 ```
 
 ### 2. Join Org (Teammates)
 
 ```bash
-$ motherflame join mf_trustfinance_be583d48d4052b2e --remote <url>
-✓ Joined TrustFinance org
+$ motherflame join mf_myorg_a7f3b9c2d1e6f4a8 --remote <url>
+✓ Joined MyOrg org
 ✓ Downloaded brain from remote (encrypted)
 ```
 
