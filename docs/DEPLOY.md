@@ -86,12 +86,12 @@ Paste API key when prompted. Stored locally in `~/.motherflame/config.yaml` (enc
 ### Step 1: Founder Creates Org
 
 ```bash
-$ motherflame create TrustFinance \
-    --remote git@github.com:opelpleple/team-brain.git
+$ motherflame create MyOrg \
+    --remote git@github.com:myteam/org-brain.git
 
-✓ Org created: TrustFinance
-✓ Flame Key: mf_trustfinance_be583d48d4052b2e
-✓ Remote: git@github.com:opelpleple/team-brain.git
+✓ Org created: MyOrg
+✓ Flame Key: mf_myorg_a7f3b9c2d1e6f4a8
+✓ Remote: git@github.com:myteam/org-brain.git
 
 Share the Flame Key with teammates (via secure channel, NOT slack).
 ```
@@ -100,10 +100,10 @@ Share the Flame Key with teammates (via secure channel, NOT slack).
 
 Each teammate:
 ```bash
-$ motherflame join mf_trustfinance_be583d48d4052b2e \
-    --remote git@github.com:opelpleple/team-brain.git
+$ motherflame join mf_myorg_a7f3b9c2d1e6f4a8 \
+    --remote git@github.com:myteam/org-brain.git
 
-✓ Joined TrustFinance org
+✓ Joined MyOrg org
 ✓ Downloaded brain from remote
 ✓ Ready to sync
 ```
@@ -124,9 +124,9 @@ $ motherflame push
 All teammates:
 ```bash
 $ motherflame status
-Org Brain: TrustFinance · 12 items (4 from teammates)
-Brain hash: 7f0b9f438bbb6a1b (all machines aligned ✓)
-Teammates: Opel (CEO), Bombay (CTO), Researcher (Legal)
+Org Brain: MyOrg · 12 items (4 from teammates)
+Brain hash: a7f3b9c2d1e6f4a8 (all machines aligned ✓)
+Teammates: Alice (CEO), Bob (product), Carol (engineering)
 Contradictions: 1 (stage) → auto-resolved via authority tiers
 ```
 
@@ -238,8 +238,8 @@ Sync Status:
   ✓ All teammates reachable
 
 Entity Graph:
-  ✓ 4 entities
-  ✓ 6 relationships
+  ✓ 5 entities
+  ✓ 8 relationships
   ✓ No dangling references
 
 Contradictions:

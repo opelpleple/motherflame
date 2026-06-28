@@ -20,15 +20,15 @@ from motherflame.core import enhance_brain_with_graph
 
 brain = {
     "items": [
-        {"key": "name", "value": "TrustFinance"},
-        {"key": "ceo", "value": "Opel"},
+        {"key": "name", "value": "MyOrg"},
+        {"key": "ceo", "value": "Alice"},
     ]
 }
 
 brain = enhance_brain_with_graph(brain)
 print(brain["graph"]["entities"])
-# [Entity(id='org:trustfinance', type='org', name='TrustFinance'),
-#  Entity(id='person:opel', type='person', name='Opel')]
+# [Entity(id='org:myorg', type='org', name='MyOrg'),
+#  Entity(id='person:alice', type='person', name='Alice')]
 ```
 
 ---
@@ -83,9 +83,9 @@ from motherflame.core import resolve_coreference
 
 brain = {
     "items": [
-        {"key": "ceo", "value": "Opel"},
-        {"key": "founder", "value": "opelpleple"},
-        {"key": "contact", "value": "opel@trustfinance.com"},
+        {"key": "ceo", "value": "Alice"},
+        {"key": "founder", "value": "alice"},
+        {"key": "contact", "value": "alice@myorg.com"},
     ]
 }
 
@@ -93,7 +93,7 @@ brain = resolve_coreference(brain)
 print(brain["coreference"]["stats"])
 # {'chains': 1, 'total_mentions': 3, 'avg_confidence': 0.95}
 
-# All 3 mentions resolved to canonical: person:opel
+# All 3 mentions resolved to canonical: person:alice
 ```
 
 ---

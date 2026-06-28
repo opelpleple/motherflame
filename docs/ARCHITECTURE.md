@@ -219,28 +219,28 @@ resolver.resolve("CEO")
 
 ## Integration: How C, E, F Work Together
 
-Scenario: TrustFinance brain has 12 items from 3 team members (CEO + researcher + legal).
+Scenario: MyOrg brain has 12 items from 3 team members (CEO + product lead + engineer).
 
 **Step 1: Build entity graph (C)**
 ```
-4 entities: TrustFinance org, Opel, Bombay, (implicit: investor)
-3 relationships: Opel is CEO of TrustFinance, Bombay is CTO, etc.
+5 entities: MyOrg, Alice (CEO), Bob (product), Carol (engineering), investor
+4 relationships: Alice is CEO of MyOrg, Bob works at MyOrg, Carol is engineer, etc.
 ```
 
 **Step 2: Validate semantics (E)**
 ```
 Contradictions detected:
-  - stage: "Series A" vs "Series B" vs "Post-A" (cardinality violation)
-  - team_size: "34" vs "35" (conflicting values)
-Resolution hints: Series A wins (0.95 > 0.6), team_size=34 (0.85 > 0.7)
+  - stage: "Series A" vs "Series B" (conflicting values)
+Resolution hints: Series A wins (0.95 > 0.6)
 ```
 
 **Step 3: Resolve coreference (F)**
 ```
-3 coreference chains:
-  - Opel + opelpleple + CEO → canonical: person:opel
-  - Bombay → canonical: person:bombay
-  - TrustFinance → canonical: org:trustfinance
+4 coreference chains:
+  - Alice + alice + alice@myorg.com → canonical: person:alice
+  - Bob → canonical: person:bob
+  - Carol → canonical: person:carol
+  - MyOrg + myorg.io → canonical: org:myorg
 ```
 
 **Result:** Single canonical brain, 3 machines aligned, 0 data loss.

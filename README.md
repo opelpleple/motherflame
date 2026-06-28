@@ -72,26 +72,26 @@ $ motherflame
   🔥 Motherflame  v0.2.0
   The Org Brain for teams that use AI
 
-🔥 TrustFinance Org Brain · 9 items (3 from teammates)
+🔥 MyOrg Org Brain · 12 items (4 from teammates)
 Connected: openai/gpt-4o-mini  ·  session 20260628-145220
 Type a message, '/' for commands, or /exit to quit.
 
-you › what are our legal constraints?
-  ⚙ graph_query(role=legal) → [Leadership] CTO: Bombay | [Legal] jurisdiction: UK FCA
-  ⚙ validate_contradictions() → 2 contested (stage, team_size) — auto-resolved
-ai  › We're UK FCA regulated and have ISO 27001. CTO is Bombay. Funding is Series A.
+you › what are our key business constraints?
+  ⚙ graph_query(role=strategy) → [Leadership] CEO: Alice | [Finance] ARR: $15M
+  ⚙ validate_contradictions() → 1 contested (stage) — auto-resolved
+ai  › You're at Series A stage, ARR is $15M. CEO is Alice. Funding closed Q2 2026.
 
 you › /pull
   ✓ Syncing with team...
-  8 new facts from teammates  ·  Aphola (competitor pricing), UT (compliance docs)
-  ✓ All 3 machines now have identical brain (hash: 7f0b9f438bbb6a1b)
+  5 new facts from teammates  · Bob (product), Carol (engineering)
+  ✓ All 3 machines now have identical brain (hash: a7f3b9c2d1e6f4a8)
 
 you › /analyze
   🔍 Brain Quality Report
-  - Entities: 4 (TrustFinance, Opel, Bombay, etc.)
-  - Coreference chains: 3 (Opel + opelpleple + CEO linked)
-  - Contradictions resolved: 2 (stage via authority tiers)
-  - Sensitivity: 3 confidential, 6 public
+  - Entities: 5 (MyOrg, Alice, Bob, Carol, etc.)
+  - Coreference chains: 4 (Alice linked across mentions)
+  - Contradictions resolved: 1 (stage via authority tiers)
+  - Sensitivity: 2 confidential, 10 public
 ```
 
 ---
