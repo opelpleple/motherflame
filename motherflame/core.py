@@ -1019,6 +1019,91 @@ def cmd_team():
     print()
 
 
+def cmd_research(url=None):
+    """motherflame research <url> — bootstrap the Org Brain from a company website.
+
+    Fetches the homepage + key pages, lets the LLM extract concrete facts, then
+    asks you to confirm each one before it enters the brain. This is the primary,
+    least-tedious way to start an Org Brain."""
+    from motherflame import research, agent, conflicts
+    from motherflame.agent import arrow_select
+
+    cfg = load_config()
+    brain = load_brain()
+
+    has_ai = bool(cfg.get("agent_api_key")) or cfg.get("provider") == "ollama"
+    if not has_ai:
+        print(f"{RED}✗ Web research needs an AI agent.{RESET}  Run: {CYAN}motherflame setup{RESET}\n")
+        return
+
+    if not url:
+        url = ask("Company website URL", "")
+    url = (url or "").strip()
+    if not url:
+        print(f"{DIM}No URL given.{RESET}")
+        return
+
+    # Privacy note: website text is public, but be explicit it goes to the LLM.
+    print(f"\n{BOLD}{FLAME_ORANGE}🔎 Researching {url}{RESET}")
+    print(f"{DIM}Fetching public pages and sending their text to {cfg.get('provider')} for extraction.{RESET}\n")
+
+    spinner("Discovering pages...", 0.5)
+    pages = research.gather(url, max_pages=5)
+    if not pages:
+        print(f"{RED}✗ Couldn't fetch that site (check the URL / your connection).{RESET}\n")
+        return
+    print(f"{GREEN}✓ Read {len(pages)} page(s):{RESET}")
+    for u in pages:
+        print(f"  {DIM}· {u}{RESET}")
+    print()
+
+    # Extract from every page, collect candidate facts
+    candidates = []
+    for i, (u, text) in enumerate(pages.items(), 1):
+        print(f"\r{FLAME_ORANGE}⠿{RESET} Extracting facts ({i}/{len(pages)})...", end="", flush=True)
+        candidates.extend(agent.llm_research_extract(cfg, text, u))
+    print(f"\r{CLEAR_LINE}", end="")
+
+    if not candidates:
+        print(f"{FLAME_YELLOW}No concrete facts found. Try a more detailed page (about/pricing).{RESET}\n")
+        return
+
+    # De-dupe by canonical key, keep highest-confidence
+    by_key = {}
+    for c in candidates:
+        k = conflicts.canonical_key(c["key"])
+        if k not in by_key or c["confidence"] > by_key[k]["confidence"]:
+            by_key[k] = c
+    found = list(by_key.values())
+
+    print(f"{GREEN}{BOLD}Found {len(found)} candidate facts.{RESET} "
+          f"{DIM}Confirm each before it enters your Org Brain:{RESET}\n")
+
+    kept = 0
+    for c in found:
+        cat, key, val = c["category"], c["key"], c["value"]
+        print(f"{BOLD}{cat}{RESET} · {FLAME_YELLOW}{key}{RESET}")
+        print(f"  {val}  {DIM}(confidence {c['confidence']:.0%}){RESET}")
+        choice = arrow_select("", ["✅ Keep", "✏️  Edit value", "❌ Skip"], default=0)
+        if choice == 0:
+            conflicts.add_claim(brain, cat, key, val, source=c["source"],
+                                confidence=c["confidence"])
+            kept += 1
+        elif choice == 1:
+            newval = ask(f"  New value for {key}", val)
+            if newval.strip():
+                conflicts.add_claim(brain, cat, key, newval.strip(), source=c["source"],
+                                    confidence=0.95)  # human-edited → high trust
+                kept += 1
+        # choice 2 → skip
+        print()
+
+    conflicts.rebuild_canonical(brain)
+    save_brain(brain)
+    print(f"{GREEN}{BOLD}✓ Added {kept} confirmed fact(s) to your Org Brain.{RESET}")
+    print(f"  {DIM}See them: {CYAN}motherflame brain{RESET}{DIM}  ·  Fill gaps: {CYAN}motherflame chat{RESET}\n")
+
+
 def cmd_brain():
     """motherflame brain — view what's in the Org Brain, grouped by category."""
     brain = load_brain()
@@ -1060,7 +1145,8 @@ def cmd_help():
   {CYAN}motherflame doctor{RESET}           Onboarding checklist — what's ready, what's missing
   {CYAN}motherflame team{RESET}             Team dashboard — key, remote health, members, invite
   {CYAN}motherflame status{RESET}           Show connection & brain status
-  {CYAN}motherflame start{RESET}            Harvest org context (AI extraction + interview)
+  {CYAN}motherflame start{RESET}            Harvest org context (web research + files + interview)
+  {CYAN}motherflame research <url>{RESET}   Research a company website → confirm facts → brain
   {CYAN}motherflame brain{RESET}            View what's in your Org Brain
   {CYAN}motherflame chat{RESET}             Talk to your Org Brain agent (tool-use, persistent)
   {CYAN}motherflame query <question>{RESET} Ask your Org Brain a one-off question
@@ -1091,13 +1177,25 @@ def cmd_start():
     print_banner()
     print(f"{BOLD}{FLAME_ORANGE}🔥 Starting Motherflame Harvest{RESET}")
     print(f"{DIM}Building Org Brain for: {BOLD}{org}{RESET}\n")
-    print(f"This will take ~5 minutes. Let's go.\n")
+
+    # ── PHASE 0: Web research (the fastest, richest start) ──
+    has_ai = bool(cfg.get("agent_api_key")) or cfg.get("provider") == "ollama"
+    if has_ai:
+        section("Phase 0 — Website Research (recommended)")
+        print("The quickest way to fill your brain: point Motherflame at your")
+        print("company website and confirm the facts it finds.\n")
+        site = ask("Company website URL (Enter to skip)", "")
+        if site.strip():
+            cmd_research(site.strip())
+            print(f"{DIM}You can also harvest local files below for internal context.{RESET}\n")
+
+    print(f"{DIM}Next: scan local files + a few quick questions.{RESET}\n")
 
     # ── PHASE A: Folder harvest ──
     section("Phase A — Folder Harvest")
     print(f"Motherflame will scan folders and extract company info automatically.\n")
 
-    base = ask("Browse from which directory? (Enter for home ~)", str(Path.home()))
+    base = ask("Browse from which directory? (Enter for home ~, or skip)", str(Path.home()))
     folders = _pick_folders(base)
 
     harvested_count = 0

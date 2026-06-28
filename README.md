@@ -88,6 +88,29 @@ motherflame setup            # pick Anthropic / OpenAI / Ollama, paste your key
 That's it. Type `/` any time to see every command. See [`CONCEPTS.md`](CONCEPTS.md)
 for a glossary of terms (Flame Key, claims, contested, etc.).
 
+### 🔎 Bootstrap from your website (recommended)
+
+Typing facts by hand is shallow and tedious. The fastest way to fill an Org Brain
+is to point Motherflame at your company website — it reads the key pages, the LLM
+extracts **concrete** facts, and you confirm each one before it's saved:
+
+```bash
+motherflame research https://yourcompany.com
+```
+
+```
+🔎 Researching https://yourcompany.com
+✓ Read 5 page(s): / · /about · /pricing · /product · /team
+Found 14 candidate facts. Confirm each before it enters your Org Brain:
+
+Product · pricing_tiers
+  Listing plans at $18k / $48k / $100k+ per year  (confidence 80%)
+  › ✅ Keep   ✏️ Edit value   ❌ Skip
+```
+
+`motherflame start` runs this first (Phase 0) before scanning local files and a
+few interview questions. Nothing is saved until you confirm it.
+
 ### Create a new org, or join an existing one
 
 The **Flame Key** (`mf_<org>_<hex>`) both names *and* encrypts your Org Brain.
@@ -157,7 +180,8 @@ Core
   motherflame                    Smart entry → splash, or drops into chat when ready
   motherflame doctor             Flame-themed readiness checklist + hints
   motherflame team               Team dashboard: key, remote health, members, invite
-  motherflame start              Harvest org context (AI extraction + interview)
+  motherflame research <url>     Research a company website → confirm facts → brain
+  motherflame start              Harvest org context (web research + files + interview)
   motherflame chat [--resume]    Talk to your Org Brain agent (tool-use, planning)
   motherflame query "<q>"        One-off question (LLM answer, or keyword fallback)
   motherflame brain              View everything in the Org Brain

@@ -300,6 +300,62 @@ Skip navigation menus, boilerplate, headers, legal disclaimers.
 Max 8 items per call. Return empty items:[] if no org facts found."""
 
 
+RESEARCH_SYSTEM = """You are a company researcher for Motherflame. You read text
+scraped from a company's public website and extract SPECIFIC, CONCRETE org facts —
+the kind a teammate would actually need, not vague summaries.
+
+Return ONLY valid JSON (no markdown) with this shape:
+{
+  "items": [
+    {"category": "Company|Product|Team|Voice|Strategy",
+     "key": "short_snake_case_key",
+     "value": "a concrete, specific fact",
+     "confidence": 0.0-1.0}
+  ]
+}
+
+RULES — be specific, not generic:
+- BAD:  {"key":"pricing","value":"subscription"}
+- GOOD: {"key":"pricing_tiers","value":"Listing plans at $18k / $48k / $100k+ per year"}
+- BAD:  {"key":"problem_solved","value":"trust and decisions"}
+- GOOD: {"key":"problem_solved","value":"Helps investors verify which financial brokers are licensed and trustworthy before investing"}
+- Capture: what the company does, exact products/features, pricing/tiers with numbers,
+  named customers/segments, founders/leadership names, headcount, locations,
+  regulators/licenses, differentiators, taglines, and stated strategy.
+- Prefer many specific facts over a few vague ones. Up to 12 items per call.
+- Mark confidence lower (0.5-0.7) for things implied rather than stated.
+- Skip nav menus, cookie banners, legal boilerplate. Return items:[] if nothing real."""
+
+
+def llm_research_extract(cfg: dict, text: str, source_url: str) -> list:
+    """Deeper extraction tuned for website text — concrete facts, more context.
+    Returns the same item shape as llm_extract_signals, tagged via='research'."""
+    excerpt = text[:6000]   # websites are denser; give the model more to work with
+    try:
+        raw = call_llm(cfg, system=RESEARCH_SYSTEM,
+                       user=f"Company website page: {source_url}\n\nText:\n{excerpt}")
+        raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        data = json.loads(raw)
+        items = data.get("items", [])
+        from datetime import datetime
+        cleaned = []
+        for item in items:
+            if not isinstance(item, dict): continue
+            if not all(k in item for k in ("category", "key", "value")): continue
+            cleaned.append({
+                "category":     str(item.get("category", "Company")),
+                "key":          str(item.get("key", "unknown")),
+                "value":        str(item.get("value", ""))[:300],
+                "confidence":   float(item.get("confidence", 0.75)),
+                "source":       source_url,
+                "harvested_at": datetime.now().isoformat(),
+                "via":          "research",
+            })
+        return cleaned
+    except Exception:
+        return []
+
+
 def llm_extract_signals(cfg: dict, text: str, source: str) -> list[dict]:
     """Use LLM to extract org signals from text. Returns list of items."""
     # Truncate to ~3000 chars to stay within token budget
