@@ -22,6 +22,11 @@ GREEN        = "\033[92m"
 CYAN         = "\033[96m"
 FLAME_ORANGE = "\033[38;5;208m"
 FLAME_YELLOW = "\033[38;5;220m"
+# Flame gradient (dark ember → bright tip) for the doctor dashboard
+FLAME_RED    = "\033[38;5;196m"
+FLAME_DEEP   = "\033[38;5;202m"
+EMBER        = "\033[38;5;238m"   # unlit / dim coal
+GREY         = "\033[38;5;245m"
 CLEAR_LINE   = "\r\033[K"
 
 # ── Scan defaults ──────────────────────────────────────────────────────────
@@ -805,6 +810,101 @@ def cmd_status():
     print_status_box(cfg, brain)
 
 
+def cmd_doctor():
+    """motherflame doctor — flame-themed onboarding dashboard.
+
+    Checks whether the org's 'fire' is fully lit: each readiness item is a flame
+    that's bright when ready, a dim ember when not — with a hint to light it."""
+    cfg = load_config()
+    brain = load_brain()
+
+    # ── gather checks: (label, ok?, detail, hint) ──
+    has_ai     = bool(cfg.get("agent_api_key")) or cfg.get("provider") == "ollama"
+    has_brain  = bool(cfg.get("flame_key"))
+    n_items    = len(brain.get("items", []))
+    has_facts  = n_items > 0
+    n_pending  = len(brain.get("pending", []))
+    has_remote = bool(cfg.get("sync_remote"))
+    try:
+        from motherflame import sync
+        sync._aesgcm(); crypto_ok = True
+    except Exception:
+        crypto_ok = False
+    # count contested facts
+    contested = sum(1 for i in brain.get("items", []) if i.get("contested"))
+
+    checks = [
+        ("AI agent",      has_ai,
+         f"{cfg.get('provider','—')}/{cfg.get('model','—')}" if has_ai else "not connected",
+         "motherflame setup"),
+        ("Org Brain",     has_brain,
+         cfg.get("org_name", "—") if has_brain else "no Flame Key",
+         "motherflame create \"<name>\"  or  motherflame join <key>"),
+        ("Encryption",    crypto_ok,
+         "AES-256-GCM ready" if crypto_ok else "cryptography missing",
+         "pip install cryptography"),
+        ("Knowledge",     has_facts,
+         f"{n_items} facts" if has_facts else "empty brain",
+         "motherflame start"),
+        ("Team sync",     has_remote,
+         cfg.get("sync_remote", "") if has_remote else "solo (no remote)",
+         "motherflame config set sync_remote <git-url>"),
+    ]
+    lit = sum(1 for _, ok, _, _ in checks if ok)
+    total = len(checks)
+
+    # ── header ──
+    print()
+    print(f"  {FLAME_ORANGE}{BOLD}🔥 Motherflame Doctor{RESET}  {DIM}— is your org's fire fully lit?{RESET}")
+    print()
+
+    # ── flame gradient progress bar ──
+    bar_w = 28
+    filled = round(bar_w * lit / total)
+    grad = [FLAME_RED, FLAME_DEEP, FLAME_ORANGE, FLAME_YELLOW]
+    bar = ""
+    for i in range(bar_w):
+        if i < filled:
+            c = grad[min(len(grad) - 1, int(len(grad) * i / max(1, filled)))]
+            bar += f"{c}▰{RESET}"
+        else:
+            bar += f"{EMBER}▱{RESET}"
+    pct = int(100 * lit / total)
+    print(f"  {bar}  {BOLD}{pct}%{RESET}")
+    print()
+
+    # ── each check as a flame ──
+    for label, ok, detail, hint in checks:
+        padded = f"{label:<13}"   # pad the RAW label so color codes don't break alignment
+        if ok:
+            print(f"   {FLAME_ORANGE}🔥{RESET}  {BOLD}{padded}{RESET} {GREEN}{detail}{RESET}")
+        else:
+            print(f"   {EMBER}··{RESET}  {GREY}{padded}{RESET} {EMBER}{detail}{RESET}")
+            print(f"        {DIM}↳ light it:{RESET} {CYAN}{hint}{RESET}")
+
+    # ── optional attention items (not blockers) ──
+    notes = []
+    if n_pending:
+        notes.append(f"{FLAME_YELLOW}📥 {n_pending} fact(s) awaiting review{RESET} {DIM}→ /review{RESET}")
+    if contested:
+        notes.append(f"{FLAME_YELLOW}⚠️  {contested} contested fact(s){RESET} {DIM}→ /resolve{RESET}")
+    if notes:
+        print()
+        for nline in notes:
+            print(f"   {nline}")
+
+    # ── verdict ──
+    print()
+    if lit == total:
+        print(f"  {FLAME_ORANGE}{BOLD}🔥🔥🔥 Fully lit — your Org Brain is ready to roll!{RESET}")
+    elif lit >= 2:
+        nxt = next(h for _, ok, _, h in checks if not ok)
+        print(f"  {FLAME_YELLOW}Almost there ({lit}/{total}).{RESET} Next: {CYAN}{nxt}{RESET}")
+    else:
+        print(f"  {GREY}Cold start ({lit}/{total}).{RESET} Begin: {CYAN}motherflame setup{RESET}")
+    print()
+
+
 def cmd_brain():
     """motherflame brain — view what's in the Org Brain, grouped by category."""
     brain = load_brain()
@@ -843,6 +943,7 @@ def cmd_help():
   {CYAN}motherflame connect [key]{RESET}    Low-level: set a Flame Key (use create/join instead)
 
 {BOLD}Commands:{RESET}
+  {CYAN}motherflame doctor{RESET}           Onboarding checklist — what's ready, what's missing
   {CYAN}motherflame status{RESET}           Show connection & brain status
   {CYAN}motherflame start{RESET}            Harvest org context (AI extraction + interview)
   {CYAN}motherflame brain{RESET}            View what's in your Org Brain
