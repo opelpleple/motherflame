@@ -3,10 +3,19 @@
 
 import sys
 from motherflame.core import (
-    cmd_connect, cmd_status, cmd_start, cmd_brain,
+    cmd_connect, cmd_create, cmd_join, cmd_status, cmd_start, cmd_brain,
     cmd_help, cmd_setup, cmd_query, cmd_chat, cmd_push, cmd_pull, cmd_config,
     print_banner, load_config, load_brain, print_status_box,
 )
+
+
+def _pop_flag(args, flag):
+    """Extract `--flag value` from args, return (value or None, remaining args)."""
+    if flag in args:
+        i = args.index(flag)
+        if i + 1 < len(args):
+            return args[i + 1], args[:i] + args[i + 2:]
+    return None, args
 
 
 def main():
@@ -37,6 +46,16 @@ def main():
     elif cmd == "connect":
         # No key → cmd_connect auto-generates a local Flame Key (no server needed).
         cmd_connect(args[1] if len(args) >= 2 else None)
+
+    elif cmd == "create":
+        remote, rest = _pop_flag(args[1:], "--remote")
+        org_name = rest[0] if rest else None
+        cmd_create(org_name, remote=remote)
+
+    elif cmd == "join":
+        remote, rest = _pop_flag(args[1:], "--remote")
+        key = rest[0] if rest else None
+        cmd_join(key, remote=remote)
 
     elif cmd == "status":
         cmd_status()

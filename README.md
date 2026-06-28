@@ -88,6 +88,28 @@ motherflame setup            # pick Anthropic / OpenAI / Ollama, paste your key
 That's it. Type `/` any time to see every command. See [`CONCEPTS.md`](CONCEPTS.md)
 for a glossary of terms (Flame Key, claims, contested, etc.).
 
+### Create a new org, or join an existing one
+
+The **Flame Key** (`mf_<org>_<hex>`) both names *and* encrypts your Org Brain.
+Whoever holds it can decrypt and sync the same brain — so it's how teams share.
+
+```bash
+# Start a NEW Org Brain (you're the first member):
+motherflame create "Acme"                              # solo
+motherflame create "Acme" --remote git@github.com:acme/brain.git   # team-synced
+
+#   → prints your Flame Key. Share it with teammates.
+
+# JOIN an existing Org Brain (a teammate gave you their key):
+motherflame join mf_acme_1a2b3c4d --remote git@github.com:acme/brain.git
+#   → sets the key, binds the remote, AND pulls + merges the team's brain
+#     so you see their knowledge right away (not an empty brain).
+```
+
+The git remote is any repo you control — the host only ever stores **ciphertext**
+(zero-knowledge). Solo users can skip `--remote` and add it later with
+`motherflame config set sync_remote <git-url>`.
+
 ### Two ways to run
 
 | | No API key | With your AI key (`setup`) |

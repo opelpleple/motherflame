@@ -690,6 +690,8 @@ def cmd_connect(flame_key=None):
         print(f"{GREEN}✓ Generated a local Flame Key{RESET} {DIM}(no server needed){RESET}")
         print(f"  {BOLD}{flame_key}{RESET}")
         print(f"  {DIM}Share this key with teammates to sync the same Org Brain.{RESET}")
+        print(f"  {DIM}Tip: use {CYAN}motherflame create{RESET}{DIM} to name your org, "
+              f"or {CYAN}motherflame join <key>{RESET}{DIM} to join an existing one.{RESET}")
     cfg["api_key"]   = flame_key
     cfg["flame_key"] = flame_key
     # Derive a friendly org name from the key if none set (mf_acme_widgets → Widgets)
@@ -709,6 +711,90 @@ def cmd_connect(flame_key=None):
 
     print(f"{GREEN}✓ Connected to Org Brain: {BOLD}{cfg['org_name']}{RESET}")
     print(f"  {DIM}Next: {CYAN}motherflame setup{RESET}{DIM} then {CYAN}motherflame start{RESET}\n")
+
+
+def cmd_create(org_name=None, remote=None):
+    """motherflame create [org-name] — start a NEW Org Brain.
+
+    Generates a Flame Key (the shared secret that names + encrypts the brain).
+    Share that key with teammates so they can `join`. Optionally bind a git
+    remote now so `push`/`pull` sync to a repo you host."""
+    cfg = load_config()
+    if not org_name:
+        org_name = ask("Name your organization", "My Org")
+    cfg["org_name"] = org_name
+    flame_key = _generate_flame_key(org_name)
+    cfg["api_key"] = cfg["flame_key"] = flame_key
+    cfg["members"] = 1
+    cfg["connected_at"] = datetime.now().isoformat()
+    cfg.pop("auto_provisioned", None)
+    if remote:
+        cfg["sync_remote"] = remote
+    save_config(cfg)
+
+    brain = load_brain()
+    brain.setdefault("org_name", org_name)
+    save_brain(brain)
+
+    print(f"\n{GREEN}✓ Created Org Brain: {BOLD}{org_name}{RESET}")
+    print(f"  {DIM}Your Flame Key (share with teammates to join):{RESET}")
+    print(f"  {BOLD}{FLAME_ORANGE}{flame_key}{RESET}")
+    if remote:
+        print(f"  {DIM}Sync remote: {remote}{RESET}")
+    else:
+        print(f"  {DIM}Solo for now. To sync a team, set a git remote:{RESET}")
+        print(f"    {CYAN}motherflame config set sync_remote <git-url>{RESET}")
+    print(f"\n  {DIM}Next: {CYAN}motherflame setup{RESET}{DIM} → {CYAN}motherflame start{RESET}\n")
+
+
+def cmd_join(flame_key, remote=None):
+    """motherflame join <key> [--remote <git-url>] — join an EXISTING Org Brain.
+
+    Unlike bare `connect`, this actually PULLS the team's brain: it sets the
+    Flame Key, binds the remote (arg, or inferred from existing config), and
+    merges the decrypted remote brain into the local one — so you see the
+    team's knowledge immediately, not an empty brain."""
+    if not flame_key:
+        print(f"{RED}✗ Need a Flame Key to join. Ask a teammate for theirs.{RESET}")
+        print(f"  {DIM}Format: mf_<org>_<hex>. Or start your own: {CYAN}motherflame create{RESET}\n")
+        return
+    cfg = load_config()
+    cfg["api_key"] = cfg["flame_key"] = flame_key
+    # derive org name from the key (mf_acme_xxxx → Acme)
+    parts = flame_key.replace("mf_", "").split("_")
+    cfg["org_name"] = (parts[0].capitalize() if parts and parts[0] else "Org")
+    if remote:
+        cfg["sync_remote"] = remote
+    cfg["connected_at"] = datetime.now().isoformat()
+    cfg.pop("auto_provisioned", None)
+    save_config(cfg)
+    print(f"{GREEN}✓ Joined Org Brain: {BOLD}{cfg['org_name']}{RESET}")
+
+    # Now actually PULL the team's brain (the part bare `connect` skipped).
+    remote = cfg.get("sync_remote")
+    if not remote:
+        print(f"  {FLAME_YELLOW}⚠️  No sync remote set — joined with an empty local brain.{RESET}")
+        print(f"  {DIM}To pull the team's knowledge, set the remote then pull:{RESET}")
+        print(f"    {CYAN}motherflame config set sync_remote <git-url>{RESET}")
+        print(f"    {CYAN}motherflame pull{RESET}\n")
+        return
+    try:
+        from motherflame import sync, conflicts
+        spinner("Pulling team brain...", 0.6)
+        remote_brain = sync.pull(flame_key, cfg["org_name"], git_remote=remote)
+        if not remote_brain:
+            print(f"  {DIM}Remote is empty — nothing to pull yet.{RESET}\n")
+            return
+        local = load_brain()
+        merged, added = sync.merge_brains(local, remote_brain)
+        conflicts.rebuild_canonical(merged)
+        save_brain(merged)
+        n = len(merged.get("items", []))
+        print(f"  {GREEN}✓ Pulled & merged — {n} facts now in your Org Brain{RESET} {DIM}(+{added} new){RESET}")
+        print(f"  {DIM}Next: {CYAN}motherflame setup{RESET}{DIM} → {CYAN}motherflame chat{RESET}\n")
+    except Exception as e:
+        print(f"  {RED}✗ Could not pull team brain: {e}{RESET}")
+        print(f"  {DIM}Check the remote URL and your access, then: {CYAN}motherflame pull{RESET}\n")
 
 
 def cmd_status():
@@ -752,7 +838,9 @@ def cmd_help():
 
 {BOLD}Setup:{RESET}
   {CYAN}motherflame setup{RESET}            Connect your AI API key (Anthropic/OpenAI/Ollama)
-  {CYAN}motherflame connect <key>{RESET}    Connect to your Org Brain (Flame Key)
+  {CYAN}motherflame create [name]{RESET}    Start a NEW Org Brain (generates a Flame Key)
+  {CYAN}motherflame join <key>{RESET}       Join an EXISTING Org Brain (pulls the team's brain)
+  {CYAN}motherflame connect [key]{RESET}    Low-level: set a Flame Key (use create/join instead)
 
 {BOLD}Commands:{RESET}
   {CYAN}motherflame status{RESET}           Show connection & brain status
