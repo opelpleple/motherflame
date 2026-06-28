@@ -334,6 +334,23 @@ motherflame team     # dashboard: Flame Key, remote health (live), members, last
                      # sync, and a copy-paste invite block for teammates
 ```
 
+### Set up team sync from chat (no config commands)
+
+You don't have to run `config set sync_remote` by hand — just ask the agent:
+
+```
+you › I want my team to share this brain
+ai  › Sure — do you have a git repo for it, or should I create one?
+you › create one
+ai  › ✓ Created private repo acme/acme-brain and set it as your sync remote (reachable).
+      Run `motherflame push` to publish; teammates run
+      `motherflame join mf_acme_… --remote https://github.com/acme/acme-brain.git`.
+```
+
+Behind the scenes the agent calls `create_team_repo` (via the `gh` CLI) or
+`setup_team_sync` (if you give it a URL), then health-checks the remote — the same
+tools are available to external agents over MCP.
+
 ---
 
 ## 🔐 Zero-knowledge sync
@@ -394,12 +411,14 @@ Motherflame speaks the [Model Context Protocol](https://modelcontextprotocol.io)
 > If `motherflame` isn't on your PATH (e.g. it's in a venv), use the absolute
 > path to the executable as `command` — find it with `which motherflame`.
 
-Exposes five tools to the external agent: `query_brain`, `list_facts`, `add_fact`,
-`forget_fact`, and `verify_fact`. The agent decides *when* to call them from their
-descriptions — e.g. it calls `query_brain` whenever it needs company-specific facts
-instead of guessing, or `add_fact` to write something it learned back into the brain.
-Returns are token-budgeted and carry **provenance** (`[source: …]`), and contested
-facts are flagged so the agent never states a disputed value as settled.
+Exposes seven tools to the external agent: `query_brain`, `list_facts`, `add_fact`,
+`forget_fact`, `verify_fact`, `setup_team_sync`, and `create_team_repo`. The agent
+decides *when* to call them from their descriptions — e.g. it calls `query_brain`
+whenever it needs company-specific facts instead of guessing, `add_fact` to write
+something it learned back into the brain, or `create_team_repo` to spin up a private
+synced repo for the team. Returns are token-budgeted and carry **provenance**
+(`[source: …]`), and contested facts are flagged so the agent never states a disputed
+value as settled.
 
 > **Read-only mode.** The MCP server has no transport-level auth (it's stdio,
 > local by design). If you connect an agent you don't fully trust, run it

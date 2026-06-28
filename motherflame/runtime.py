@@ -61,6 +61,29 @@ TOOLS = [
         },
     },
     {
+        "name": "setup_team_sync",
+        "description": "Set up team sync by binding a git remote URL, then verify it's reachable. Use when the user wants to share the Org Brain with teammates and already has a git repo (they give you the URL). After this, `motherflame push` publishes the brain and teammates can `join`.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "git_url": {"type": "string", "description": "The git remote URL, e.g. git@github.com:acme/org-brain.git"},
+            },
+            "required": ["git_url"],
+        },
+    },
+    {
+        "name": "create_team_repo",
+        "description": "Create a NEW private GitHub repo (via the gh CLI) to host the team's encrypted brain, then bind it as the sync remote. Use when the user wants team sync but does NOT have a repo yet. Requires the gh CLI installed and authenticated. Prefer this over telling the user to create a repo manually.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Optional repo name. Defaults to '<org>-brain'."},
+                "private": {"type": "boolean", "description": "Whether the repo is private (default true — recommended for org data)."},
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "list_gaps",
         "description": "List what information is still missing from the Org Brain.",
         "parameters": {"type": "object", "properties": {}, "required": []},
@@ -162,6 +185,70 @@ def _tool_verify_fact(brain, key):
     return f"Verified '{key}' — now trusted above unverified claims."
 
 
+def _tool_setup_team_sync(brain, git_url):
+    """Bind a git remote for team sync and verify it's reachable. The agent uses
+    this so the user can set up team sync from chat instead of running
+    `config set` manually."""
+    from motherflame import core, sync
+    git_url = (git_url or "").strip()
+    if not git_url:
+        return ("I need a git remote URL (e.g. git@github.com:you/org-brain.git). "
+                "If you don't have a repo yet, ask me to create one with create_team_repo.")
+    health = sync.check_remote(git_url)
+    cfg = core.load_config()
+    cfg["sync_remote"] = git_url
+    core.save_config(cfg)
+    if health["ok"]:
+        return (f"✓ Team sync set to {git_url} ({health['status']}). "
+                f"Run `motherflame push` to publish the brain; teammates `join` with the Flame Key "
+                f"{cfg.get('flame_key','')} and the same remote.")
+    return (f"⚠️ Saved sync_remote = {git_url}, but it's not reachable yet "
+            f"({health['status']}: {health['detail']}). "
+            f"Fix access (SSH key / repo exists) — once reachable, `motherflame push` will work.")
+
+
+def _tool_create_team_repo(brain, name=None, private=True):
+    """Create a brand-new GitHub repo via the `gh` CLI, bind it as the sync
+    remote, and report the result. Lets the agent set up team sync end-to-end
+    in chat when the user has gh installed + authenticated."""
+    import shutil, subprocess
+    from motherflame import core
+    if not shutil.which("gh"):
+        return ("The GitHub CLI (`gh`) isn't installed, so I can't create a repo automatically. "
+                "Either install it (https://cli.github.com), create a repo manually, then tell me "
+                "the URL to run setup_team_sync — or use any git host you control.")
+    cfg = core.load_config()
+    org = cfg.get("org_name", "org").lower().replace(" ", "-")
+    repo = (name or f"{org}-brain").strip()
+    vis = "--private" if private else "--public"
+    # create the repo under the authenticated user
+    p = subprocess.run(["gh", "repo", "create", repo, vis, "--clone=false"],
+                       capture_output=True, text=True)
+    existed = False
+    if p.returncode != 0:
+        if "already exists" in (p.stderr or "").lower() or "name already" in (p.stderr or "").lower():
+            existed = True
+        elif "not logged" in (p.stderr or "").lower() or "auth" in (p.stderr or "").lower():
+            return ("`gh` isn't authenticated. Run `gh auth login` once, then ask me again "
+                    "and I'll create the team repo.")
+        else:
+            err = (p.stderr or "").strip().splitlines()
+            return f"Couldn't create the repo: {err[-1] if err else 'unknown error'}"
+    # resolve owner + use the protocol gh is configured for (https vs ssh) so the
+    # health check and push use working auth
+    who = subprocess.run(["gh", "api", "user", "--jq", ".login"],
+                         capture_output=True, text=True).stdout.strip()
+    proto = subprocess.run(["gh", "config", "get", "git_protocol"],
+                           capture_output=True, text=True).stdout.strip() or "https"
+    if proto == "ssh":
+        url = f"git@github.com:{who}/{repo}.git"
+    else:
+        url = f"https://github.com/{who}/{repo}.git"
+    result = _tool_setup_team_sync(brain, url)
+    verb = "Using existing" if existed else f"Created {'private' if private else 'public'}"
+    return f"✓ {verb} repo {who}/{repo}.\n{result}"
+
+
 def _dispatch_tool(name, args, brain):
     """Run a tool by name. Returns (result_string, mutated)."""
     try:
@@ -174,6 +261,11 @@ def _dispatch_tool(name, args, brain):
             return _tool_forget_fact(brain, args.get("key", "")), True
         elif name == "verify_fact":
             return _tool_verify_fact(brain, args.get("key", "")), True
+        elif name == "setup_team_sync":
+            return _tool_setup_team_sync(brain, args.get("git_url", "")), False
+        elif name == "create_team_repo":
+            return _tool_create_team_repo(brain, args.get("name"),
+                                          args.get("private", True)), False
         elif name == "list_gaps":
             return _tool_list_gaps(brain), False
         elif name == "list_all_facts":

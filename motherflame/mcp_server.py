@@ -96,6 +96,34 @@ def _tool_defs():
                 "required": ["key"],
             },
         },
+        {
+            "name": "setup_team_sync",
+            "description": (
+                "Bind a git remote URL for zero-knowledge team sync and verify it's "
+                "reachable. Use when the user wants to share the Org Brain and has a repo URL."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {"git_url": {"type": "string"}},
+                "required": ["git_url"],
+            },
+        },
+        {
+            "name": "create_team_repo",
+            "description": (
+                "Create a new private GitHub repo (via the gh CLI) to host the team's "
+                "encrypted brain and bind it as the sync remote. Use when the user wants "
+                "team sync but has no repo yet. Requires gh installed + authenticated."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "private": {"type": "boolean"},
+                },
+                "required": [],
+            },
+        },
     ]
 
 
@@ -145,6 +173,18 @@ def _run_tool(name, args):
                     "(unset MOTHERFLAME_MCP_READONLY to allow verify_fact).")
         from motherflame.runtime import _tool_verify_fact
         return update_brain(lambda b: _tool_verify_fact(b, args.get("key", "")))
+    elif name == "setup_team_sync":
+        if _readonly():
+            return ("⚠️ This Org Brain is connected read-only. Team-sync setup is disabled "
+                    "(unset MOTHERFLAME_MCP_READONLY to allow).")
+        from motherflame.runtime import _tool_setup_team_sync
+        return _tool_setup_team_sync(load_brain(), args.get("git_url", ""))
+    elif name == "create_team_repo":
+        if _readonly():
+            return ("⚠️ This Org Brain is connected read-only. Team-sync setup is disabled "
+                    "(unset MOTHERFLAME_MCP_READONLY to allow).")
+        from motherflame.runtime import _tool_create_team_repo
+        return _tool_create_team_repo(load_brain(), args.get("name"), args.get("private", True))
     else:
         raise ValueError(f"Unknown tool: {name}")
 
