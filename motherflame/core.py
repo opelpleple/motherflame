@@ -927,6 +927,16 @@ def cmd_doctor():
         for nline in notes:
             print(f"   {nline}")
 
+    # ── retrieval mode (info line) ──
+    mode = cfg.get("retrieval", "keyword")
+    nvec = len(brain.get("embeddings", {}))
+    if mode == "semantic":
+        print(f"  {DIM}Retrieval: {FLAME_YELLOW}semantic{RESET}{DIM} · {nvec} vectors "
+              f"({cfg.get('embedding','hashing')}){RESET}")
+    else:
+        print(f"  {DIM}Retrieval: keyword{RESET}"
+              + (f"{DIM} · run {CYAN}motherflame reindex{RESET}{DIM} for semantic{RESET}" if not nvec else ""))
+
     # ── verdict ──
     print()
     if lit == total:
@@ -1155,6 +1165,39 @@ def cmd_docs(action=None, arg=None):
     print(f"\n  {DIM}View: {CYAN}motherflame docs show <id>{RESET}\n")
 
 
+def cmd_reindex():
+    """motherflame reindex — (re)build semantic embeddings for all facts + document
+    chunks so semantic search is fast. Uses the configured embedding provider."""
+    from motherflame import embeddings, documents
+    cfg = load_config()
+    brain = load_brain()
+    provider = embeddings.get_provider(cfg)
+
+    texts = []
+    for it in brain.get("items", []):
+        texts.append(f"{it.get('key','')} {it.get('value','')} {it.get('category','')}")
+    for _did, title, _i, chunk in documents.iter_chunks(brain):
+        texts.append(f"{title} {chunk}")
+
+    if not texts:
+        print(f"{DIM}Nothing to index yet — add facts or documents first.{RESET}")
+        return
+
+    print(f"{FLAME_ORANGE}⠿{RESET} Embedding {len(texts)} items with {BOLD}{provider.name}{RESET}...")
+    for i, t in enumerate(texts, 1):
+        embeddings.get_or_embed(brain, provider, t)
+        if i % 20 == 0:
+            print(f"\r  {i}/{len(texts)}", end="", flush=True)
+    save_brain(brain)
+    n = len(brain.get("embeddings", {}))
+    print(f"\r{GREEN}✓ Indexed {len(texts)} items — {n} vectors cached ({provider.name}).{RESET}")
+    active = cfg.get("retrieval", "keyword")
+    if active != "semantic":
+        print(f"  {DIM}Enable semantic search: {CYAN}motherflame config set retrieval semantic{RESET}\n")
+    else:
+        print(f"  {DIM}Semantic search is active.{RESET}\n")
+
+
 def cmd_brain():
     """motherflame brain — view what's in the Org Brain, grouped by category."""
     brain = load_brain()
@@ -1199,6 +1242,7 @@ def cmd_help():
   {CYAN}motherflame start{RESET}            Harvest org context (web research + files + interview)
   {CYAN}motherflame research <url>{RESET}   Research a company website → confirm facts → brain
   {CYAN}motherflame docs{RESET}             Long-form documents: list / show <id> / add <file>
+  {CYAN}motherflame reindex{RESET}          Build semantic embeddings (then: config set retrieval semantic)
   {CYAN}motherflame brain{RESET}            View what's in your Org Brain
   {CYAN}motherflame chat{RESET}             Talk to your Org Brain agent (tool-use, persistent)
   {CYAN}motherflame query <question>{RESET} Ask your Org Brain a one-off question

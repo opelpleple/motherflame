@@ -130,10 +130,12 @@ def _tool_query_brain(brain, topic):
     out = fit["context"] or ""
 
     # Also surface the most relevant passage from any long documents (plans,
-    # memos) so answers aren't limited to short facts.
+    # memos) so answers aren't limited to short facts. Uses the configured
+    # retriever (keyword by default, semantic if the user enabled it).
     try:
-        from motherflame import retrieval
-        chunks = [r for r in retrieval.search(brain, topic, k=2) if r["type"] == "chunk"]
+        from motherflame import retrieval, core
+        cfg = core.load_config()
+        chunks = [r for r in retrieval.search(brain, topic, k=2, cfg=cfg) if r["type"] == "chunk"]
         if chunks:
             out += "\n\nRelevant document passages:"
             for c in chunks:

@@ -39,8 +39,25 @@ def set_active(name: str):
         _ACTIVE = name
 
 
-def get_retriever():
-    return _REGISTRY.get(_ACTIVE, _REGISTRY["keyword"])()
+def get_retriever(cfg=None):
+    # lazy-import the retrievers package so 'semantic' registers without a cycle
+    try:
+        import motherflame.retrievers  # noqa: F401
+    except Exception:
+        pass
+    cfg = cfg or {}
+    name = (cfg.get("retrieval") or _ACTIVE)
+    cls = _REGISTRY.get(name, _REGISTRY["keyword"])
+    # semantic retriever takes cfg (for the embedding provider); keyword doesn't
+    try:
+        return cls(cfg)
+    except TypeError:
+        return cls()
+
+
+def search(brain: dict, query: str, k: int = 6, cfg=None) -> list:
+    """Convenience: rank with the active retriever (or the one named in cfg)."""
+    return get_retriever(cfg).search(brain, query, k=k)
 
 
 def _tokens(text: str) -> list:
@@ -104,8 +121,3 @@ class KeywordRetriever(BaseRetriever):
         hits = sum(c for t, c in qcount.items() if t in dset)
         # normalize a little by query size so longer queries don't inflate
         return hits / (sum(qcount.values()) ** 0.5)
-
-
-def search(brain: dict, query: str, k: int = 6) -> list:
-    """Convenience: rank with the active retriever."""
-    return get_retriever().search(brain, query, k=k)

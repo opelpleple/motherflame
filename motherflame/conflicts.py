@@ -52,6 +52,7 @@ def ensure_layers(brain: dict) -> dict:
     brain.setdefault("owners", {})         # scope (category or key) -> owner
     brain.setdefault("pending", [])        # review queue: claims awaiting approval
     brain.setdefault("documents", {})      # long-form docs (snapshots), chunked
+    brain.setdefault("embeddings", {})     # content-hash -> vector (semantic cache)
     return brain
 
 

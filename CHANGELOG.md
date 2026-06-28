@@ -3,6 +3,25 @@
 All notable changes to Motherflame are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.0] — Unreleased
+
+### Semantic retrieval (P1 — pluggable, opt-in)
+- **`embeddings.py`** — text→vector providers. `HashingEmbedding` (pure stdlib,
+  offline, zero-dep, the safe default) and `OpenAIEmbedding` (user's own key,
+  `text-embedding-3-small`, batched, always falls back to hashing on any error so
+  retrieval never breaks). `cosine()` in stdlib math.
+- **Embedding cache** — `brain["embeddings"]` keyed by (provider, content) hash;
+  unchanged items are never re-embedded.
+- **`SemanticRetriever`** (`retrievers/semantic.py`) — ranks facts + document
+  chunks by cosine similarity, plugs into the existing `BaseRetriever` seam.
+  Registered as `"semantic"`; keyword stays the default. Finds paraphrases that
+  share no keywords.
+- **`reindex` command** + `config set retrieval semantic` switch; `doctor` shows
+  the active retrieval mode and vector count. `query_brain` honors the configured
+  retriever.
+- Privacy/cost note: OpenAI embeddings send content out + cost money, so semantic
+  is **opt-in**; the hashing default keeps everything offline.
+
 ## [0.1.0] — Unreleased
 
 The first usable version. Built as an org-brain CLI agent that any organization
