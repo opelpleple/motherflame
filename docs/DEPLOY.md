@@ -175,7 +175,7 @@ $ motherflame pull
 
 ```bash
 $ motherflame status
-Org Brain: TrustFinance · 12 items
+Org Brain: MyOrg · 12 items
 Teammates: 3 (all synced ✓)
 Last sync: 2 minutes ago
 Pending contradictions: 0
@@ -397,9 +397,9 @@ $ motherflame rotate-key --new-remote <new-url>
 
 ```bash
 $ motherflame audit --show teammates
-Opel (CEO)          — last access: 5 min ago
-Bombay (CTO)        — last access: 1 hour ago
-Researcher (Legal)  — last access: 2 hours ago
+Alice (CEO)         — last access: 5 min ago
+Bob (Product)       — last access: 1 hour ago
+Carol (Engineering) — last access: 2 hours ago
 ```
 
 ### 5. Review Sensitive Facts
