@@ -118,10 +118,26 @@ def _decrypt_legacy(blob: bytes, flame_key: str) -> bytes:
 #              team actually shares one brain. You host the repo (GitHub/GitLab/
 #              self-hosted); the server only ever sees the encrypted blob.
 
-def _backend_path(org_id: str) -> Path:
+def _blob_slug(org_id: str, flame_key: str = None) -> str:
+    """Stable filename for the encrypted brain blob.
+
+    IMPORTANT: derive from the Flame Key when available, NOT the typed org name.
+    Members may capitalize the org differently (TrustFinance vs Trustfinance) —
+    if the blob name followed org_name, two members would read/write DIFFERENT
+    files on the same remote and silently never sync. The Flame Key is identical
+    for everyone in the org, so it's the correct stable key.
+    """
+    if flame_key:
+        # mf_<org>_<hex> → use the whole key, sanitized; falls back to org slug
+        safe = "".join(c for c in flame_key if c.isalnum() or c in "-_")
+        if safe:
+            return safe
+    return "".join(c for c in (org_id or "") if c.isalnum() or c in "-_") or "org"
+
+
+def _backend_path(org_id: str, flame_key: str = None) -> Path:
     CLOUD_DIR.mkdir(parents=True, exist_ok=True)
-    safe = "".join(c for c in org_id if c.isalnum() or c in "-_") or "org"
-    return CLOUD_DIR / f"{safe}.flame"
+    return CLOUD_DIR / f"{_blob_slug(org_id, flame_key)}.flame"
 
 
 def _git(args, cwd, check=True):
@@ -195,7 +211,7 @@ def push(brain: dict, flame_key: str, org_id: str, git_remote: str = None) -> di
     write to the local cloud dir."""
     payload = json.dumps(brain, ensure_ascii=False).encode()
     blob = encrypt(payload, flame_key)
-    safe = "".join(c for c in org_id if c.isalnum() or c in "-_") or "org"
+    safe = _blob_slug(org_id, flame_key)
 
     if git_remote:
         repo = _git_sync_dir(git_remote)
@@ -229,7 +245,7 @@ def push(brain: dict, flame_key: str, org_id: str, git_remote: str = None) -> di
                 "pushed_at": datetime.now().isoformat(timespec="seconds"),
                 "backend": "git", "remote": git_remote, "error": last_err}
 
-    path = _backend_path(org_id)
+    path = _backend_path(org_id, flame_key)
     path.write_bytes(blob)
     return {"ok": True, "bytes": len(blob), "items": len(brain.get("items", [])),
             "pushed_at": datetime.now().isoformat(timespec="seconds"),
@@ -238,27 +254,32 @@ def push(brain: dict, flame_key: str, org_id: str, git_remote: str = None) -> di
 
 def pull(flame_key: str, org_id: str, git_remote: str = None) -> dict | None:
     """Download ciphertext and decrypt client-side. Returns brain dict or None."""
-    safe = "".join(c for c in org_id if c.isalnum() or c in "-_") or "org"
+    safe = _blob_slug(org_id, flame_key)
     if git_remote:
         repo = _git_sync_dir(git_remote)
         _git(["pull", "--no-edit", "origin", "main"], cwd=repo, check=False)
         fpath = repo / f"{safe}.flame"
         if not fpath.exists():
-            return None
+            # Back-compat: an older client may have written an org-name blob.
+            legacy = repo / (("".join(c for c in (org_id or "") if c.isalnum() or c in "-_") or "org") + ".flame")
+            if legacy.exists():
+                fpath = legacy
+            else:
+                return None
         return json.loads(decrypt(fpath.read_bytes(), flame_key))
 
-    path = _backend_path(org_id)
+    path = _backend_path(org_id, flame_key)
     if not path.exists():
         return None
     return json.loads(decrypt(path.read_bytes(), flame_key))
 
 
-def remote_exists(org_id: str, git_remote: str = None) -> bool:
-    safe = "".join(c for c in org_id if c.isalnum() or c in "-_") or "org"
+def remote_exists(org_id: str, git_remote: str = None, flame_key: str = None) -> bool:
+    safe = _blob_slug(org_id, flame_key)
     if git_remote:
         repo = _git_sync_dir(git_remote)
         return (repo / f"{safe}.flame").exists()
-    return _backend_path(org_id).exists()
+    return _backend_path(org_id, flame_key).exists()
 
 
 def merge_brains(local: dict, remote: dict) -> tuple[dict, int]:
