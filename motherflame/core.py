@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from motherflame import __version__
+from motherflame import graph, semantic_validator, coreference
 
 # ── Paths ──────────────────────────────────────────────────────────────────
 CONFIG_DIR  = Path.home() / ".motherflame"
@@ -152,6 +153,62 @@ def load_brain():
 
 def save_brain(brain):
     _atomic_write_json(BRAIN_FILE, brain)
+
+
+# ──────────────────────────────────────────────
+# C, E, F: Entity Graph, Semantic Validation, Coreference
+# ──────────────────────────────────────────────
+
+def enhance_brain_with_graph(brain: dict) -> dict:
+    """Build entity graph from canonical brain."""
+    g = graph.EntityGraph()
+    g.build_from_brain(brain)
+    
+    # Store graph metadata in brain
+    if "graph" not in brain:
+        brain["graph"] = {}
+    brain["graph"]["entities"] = len(g.entities)
+    brain["graph"]["relationships"] = len(g.relationships)
+    brain["graph"]["stats"] = g.stats()
+    
+    return brain
+
+
+def validate_semantic_consistency(brain: dict) -> dict:
+    """Detect & report semantic contradictions."""
+    items = brain.get("items", [])
+    validator = semantic_validator.SemanticValidator()
+    contradictions = validator.validate_facts(items)
+    
+    # Store contradictions in brain
+    if "contradictions" not in brain:
+        brain["contradictions"] = []
+    brain["contradictions"] = [c.to_dict() for c in contradictions]
+    brain["contradiction_summary"] = validator.summary()
+    
+    return brain
+
+
+def resolve_coreference(brain: dict) -> dict:
+    """Link duplicate entity mentions to canonical forms."""
+    items = brain.get("items", [])
+    resolver = coreference.CoreferenceResolver()
+    resolver.build_from_facts(items)
+    
+    # Store coreference chains in brain
+    if "coreference" not in brain:
+        brain["coreference"] = {}
+    brain["coreference"]["chains"] = resolver.export_chains()
+    brain["coreference"]["stats"] = resolver.stats()
+    
+    # Optionally apply canonical resolution to items
+    for item in items:
+        value = item.get("value", "")
+        canonical = resolver.resolve(value)
+        if canonical:
+            item["canonical_form"] = canonical
+    
+    return brain
 
 
 # ──────────────────────────────────────────────
